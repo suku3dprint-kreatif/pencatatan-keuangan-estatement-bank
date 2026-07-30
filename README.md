@@ -35,8 +35,16 @@ ada di kamus merchant akan berlabel "Belum jelas" dan bisa kamu koreksi manual.
 
 ## Deploy
 
-Cara paling mudah: import repo ini di [vercel.com/new](https://vercel.com/new). Framework
-ter-deteksi otomatis (Next.js), tidak ada build command yang perlu diatur.
+Cara paling mudah: import repo ini di [vercel.com/new](https://vercel.com/new). Framework preset-nya
+dipaksa lewat `vercel.json` (`"framework": "nextjs"`), jadi tidak ada build command atau output
+directory yang perlu diatur.
+
+`vercel.json` itu ada karena satu jebakan yang gampang kena: Vercel mendeteksi framework **sekali,
+saat import**, dari isi branch default. Kalau waktu itu branch default-nya masih kosong (belum ada
+`package.json`), preset-nya tersimpan sebagai *Other* — dan setelan itu menempel meski kodenya sudah
+masuk belakangan. Gejalanya build sukses tapi gagal dengan
+`No Output Directory named "public" found`, karena preset *Other* mencari `public`, bukan `.next`.
+Dengan `vercel.json` di repo, setelan dashboard yang salah tertimpa sendiri.
 
 Setelah project dibuat, set env var di **Settings → Environment Variables**:
 
@@ -49,6 +57,11 @@ Dua hal yang perlu diperhatikan di serverless:
 - **Batas ukuran upload.** Platform menolak request body di atas ~4,5 MB sebelum route
   handler-nya jalan, jadi `MAX_UPLOAD_MB` default-nya 4. E-statement satu bulan biasanya jauh di
   bawah itu.
+- **Worker pdfjs harus dipaksa ikut ke bundle.** pdfjs memuat `pdf.worker.mjs` lewat import
+  dinamis, jadi file tracing Next tidak melihatnya dan hanya menyalin `pdf.mjs`. Di mesin sendiri
+  tidak pernah kelihatan karena `node_modules` utuh; di serverless, upload PDF gagal dengan
+  `Setting up fake worker failed`. `outputFileTracingIncludes` di `next.config.ts` menyertakan
+  worker dan font standarnya secara eksplisit.
 - **Batas durasi function.** `/api/enrich` disetel `maxDuration = 60` supaya cocok dengan plan
   Hobby. Yang menentukan bukan jumlah transaksinya, tapi berapa **putaran** panggilan API yang
   dibutuhkan: item dipecah per 30 dan dijalankan 3 paralel, jadi `ENRICH_MAX_ITEMS = 90` menjamin

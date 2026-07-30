@@ -6,7 +6,7 @@ import { Uploader } from "@/components/Uploader";
 import { Dashboard } from "@/components/Dashboard";
 import { Card, CardHeader } from "@/components/ui";
 import { angka } from "@/lib/format";
-import { dedupKey } from "@/lib/ai/dedup";
+import { dedupKey, ENRICH_MAX_ITEMS } from "@/lib/ai/dedup";
 import { mergeStatements, type MergedStatement } from "@/lib/analysis/merge";
 
 /** Koreksi kategori manual disimpan per pola keterangan, bukan per id transaksi,
@@ -90,13 +90,13 @@ export default function Home() {
       qris: t.qris,
     }));
 
-    // Dipecah supaya request tidak pernah kelewat besar/lama.
-    const CHUNK = 300;
+    // Dipecah sesuai batas yang diterima route-nya, supaya tidak ada request
+    // yang ditolak 413 atau kena batas durasi function.
     const results: EnrichResult[] = [];
     const errors: string[] = [];
 
-    for (let i = 0; i < items.length; i += CHUNK) {
-      const slice = items.slice(i, i + CHUNK);
+    for (let i = 0; i < items.length; i += ENRICH_MAX_ITEMS) {
+      const slice = items.slice(i, i + ENRICH_MAX_ITEMS);
       try {
         const res = await fetch("/api/enrich", {
           method: "POST",

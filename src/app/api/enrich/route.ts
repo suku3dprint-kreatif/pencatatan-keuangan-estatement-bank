@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { enrichTransactions, isAiConfigured } from "@/lib/ai/enrich";
+import { ENRICH_MAX_ITEMS } from "@/lib/ai/dedup";
 import type { EnrichItem } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
-
-/** Batas jumlah transaksi per panggilan, supaya request tidak pernah kelewat lama. */
-const MAX_ITEMS = 400;
+/**
+ * 60 detik adalah batas plan Hobby Vercel. `ENRICH_MAX_ITEMS` dipilih supaya
+ * satu panggilan selesai dalam satu putaran panggilan API — lihat komentarnya.
+ * Client memecah sendiri kalau transaksinya lebih banyak dari itu.
+ */
+export const maxDuration = 60;
 
 export async function GET() {
   return NextResponse.json({ aiAvailable: isAiConfigured() });
@@ -33,9 +36,9 @@ export async function POST(request: Request) {
   if (!Array.isArray(body.items)) {
     return NextResponse.json({ error: "Field `items` harus array." }, { status: 400 });
   }
-  if (body.items.length > MAX_ITEMS) {
+  if (body.items.length > ENRICH_MAX_ITEMS) {
     return NextResponse.json(
-      { error: `Terlalu banyak transaksi sekaligus (maksimal ${MAX_ITEMS}).` },
+      { error: `Terlalu banyak transaksi sekaligus (maksimal ${ENRICH_MAX_ITEMS}).` },
       { status: 413 },
     );
   }

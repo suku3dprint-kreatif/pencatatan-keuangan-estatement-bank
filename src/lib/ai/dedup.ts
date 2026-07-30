@@ -10,6 +10,21 @@
  * Modul ini sengaja dipisah dari `enrich.ts` supaya bisa diimpor dari komponen
  * client tanpa menarik SDK Anthropic ke bundle browser.
  */
+/**
+ * Jumlah transaksi maksimal per panggilan `/api/enrich`.
+ *
+ * Angkanya ditentukan batas durasi function, bukan ukuran payload. Di dalam
+ * `enrichTransactions` item dipecah per 30 dan dijalankan 3 paralel, jadi 90
+ * item = paling banyak 3 batch = **satu putaran** panggilan API. Satu putaran
+ * aman diselesaikan dalam 60 detik (batas plan Hobby Vercel); dua putaran
+ * tidak. Deduplikasi jalan sebelum pembatchan, jadi biasanya jauh lebih sedikit.
+ *
+ * Dipakai bersama oleh route handler (sebagai batas yang ditolak) dan halaman
+ * client (sebagai ukuran potongan) — kalau keduanya beda, setiap request
+ * langsung ditolak 413.
+ */
+export const ENRICH_MAX_ITEMS = 90;
+
 export function dedupKey(description: string): string {
   return description
     .toUpperCase()

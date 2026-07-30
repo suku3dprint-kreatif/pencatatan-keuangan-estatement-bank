@@ -49,10 +49,12 @@ Dua hal yang perlu diperhatikan di serverless:
 - **Batas ukuran upload.** Platform menolak request body di atas ~4,5 MB sebelum route
   handler-nya jalan, jadi `MAX_UPLOAD_MB` default-nya 4. E-statement satu bulan biasanya jauh di
   bawah itu.
-- **Batas durasi function.** `src/app/api/enrich/route.ts` menyetel `maxDuration = 300`. Angka itu
-  butuh plan Pro; di plan Hobby akan dibatasi ke 60 detik, dan analisa AI untuk statement yang
-  sangat banyak transaksinya bisa terputus di tengah. Kalau kena, turunkan `MAX_ITEMS` di file yang
-  sama supaya satu panggilan selesai lebih cepat — hasil rule-based tidak terpengaruh.
+- **Batas durasi function.** `/api/enrich` disetel `maxDuration = 60` supaya cocok dengan plan
+  Hobby. Yang menentukan bukan jumlah transaksinya, tapi berapa **putaran** panggilan API yang
+  dibutuhkan: item dipecah per 30 dan dijalankan 3 paralel, jadi `ENRICH_MAX_ITEMS = 90` menjamin
+  satu request = satu putaran. Statement dengan transaksi lebih banyak dipecah otomatis oleh client
+  jadi beberapa request, masing-masing tetap di bawah 60 detik. Kalau pakai plan Pro dan mau lebih
+  sedikit round trip, naikkan `maxDuration` ke 300 dan `ENRICH_MAX_ITEMS` ke kelipatan 90.
 
 ---
 

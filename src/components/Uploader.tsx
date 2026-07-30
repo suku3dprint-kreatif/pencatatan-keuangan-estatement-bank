@@ -53,7 +53,7 @@ export function Uploader({
         {busy ? (status ?? "Memproses…") : "Tarik e-statement ke sini"}
       </p>
       <p className="mt-1 text-xs text-ink-muted">
-        PDF atau CSV, maksimal 25 MB per file. Bisa <strong>beberapa file sekaligus</strong> —
+        PDF atau CSV, maksimal 4 MB per file. Bisa <strong>beberapa file sekaligus</strong> —
         misalnya statement beberapa bulan — dan semuanya digabung jadi satu analisa.
       </p>
       <p className="mt-1 text-xs text-ink-muted">

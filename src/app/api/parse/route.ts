@@ -5,7 +5,18 @@ import { isAiConfigured } from "@/lib/ai/enrich";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const MAX_BYTES = 25 * 1024 * 1024;
+/**
+ * Batas ukuran file.
+ *
+ * Di server sendiri 25 MB tidak masalah, tapi platform serverless (Vercel dkk)
+ * menolak request body di atas ~4,5 MB **sebelum** handler ini jalan — pemakai
+ * cuma dapat error mentah tanpa penjelasan. Jadi batasnya diturunkan ke 4 MB
+ * supaya pesan errornya datang dari sini dan bisa dimengerti. E-statement PDF
+ * satu bulan biasanya di bawah 1 MB, jadi ini masih longgar.
+ *
+ * Bisa dinaikkan lewat `MAX_UPLOAD_MB` kalau di-deploy sendiri tanpa batas itu.
+ */
+const MAX_BYTES = Number(process.env.MAX_UPLOAD_MB ?? 4) * 1024 * 1024;
 
 export async function POST(request: Request) {
   let form: FormData;

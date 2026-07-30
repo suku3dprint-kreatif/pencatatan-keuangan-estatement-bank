@@ -29,6 +29,30 @@ ada di kamus merchant akan berlabel "Belum jelas" dan bisa kamu koreksi manual.
 | `ANTHROPIC_API_KEY` | tidak | — | Kalau kosong, AI analyzer dilewati |
 | `ANTHROPIC_MODEL` | tidak | `claude-opus-5` | |
 | `ANTHROPIC_EFFORT` | tidak | `medium` | `low` \| `medium` \| `high` \| `xhigh` \| `max` |
+| `MAX_UPLOAD_MB` | tidak | `4` | Batas ukuran per file. Default-nya mengikuti batas request body platform serverless (~4,5 MB) |
+
+---
+
+## Deploy
+
+Cara paling mudah: import repo ini di [vercel.com/new](https://vercel.com/new). Framework
+ter-deteksi otomatis (Next.js), tidak ada build command yang perlu diatur.
+
+Setelah project dibuat, set env var di **Settings → Environment Variables**:
+
+| Variabel | Nilai |
+|---|---|
+| `ANTHROPIC_API_KEY` | API key kamu — **tanpa ini AI analyzer dilewati**, sisanya tetap jalan |
+
+Dua hal yang perlu diperhatikan di serverless:
+
+- **Batas ukuran upload.** Platform menolak request body di atas ~4,5 MB sebelum route
+  handler-nya jalan, jadi `MAX_UPLOAD_MB` default-nya 4. E-statement satu bulan biasanya jauh di
+  bawah itu.
+- **Batas durasi function.** `src/app/api/enrich/route.ts` menyetel `maxDuration = 300`. Angka itu
+  butuh plan Pro; di plan Hobby akan dibatasi ke 60 detik, dan analisa AI untuk statement yang
+  sangat banyak transaksinya bisa terputus di tengah. Kalau kena, turunkan `MAX_ITEMS` di file yang
+  sama supaya satu panggilan selesai lebih cepat — hasil rule-based tidak terpengaruh.
 
 ---
 

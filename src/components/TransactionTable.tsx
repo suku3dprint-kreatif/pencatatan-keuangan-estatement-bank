@@ -218,6 +218,11 @@ export function TransactionTable({
                     {rupiah(t.amount)}
                   </span>
                   <span className="sr-only">{t.direction === "credit" ? " masuk" : " keluar"}</span>
+                  {t.fee ? (
+                    <span className="mt-0.5 block text-[10px] text-ink-muted">
+                      termasuk biaya {rupiah(t.fee)}
+                    </span>
+                  ) : null}
                   {t.balance !== undefined ? (
                     <span className="mt-0.5 block text-[10px] text-ink-muted">
                       saldo {rupiah(t.balance)}

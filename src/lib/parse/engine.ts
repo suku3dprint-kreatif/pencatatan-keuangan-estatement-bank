@@ -23,6 +23,11 @@ export interface RawRecord {
   /** Seberapa yakin arah dana (debit/kredit) ditentukan. 0–1. */
   directionConfidence: number;
   origin: string;
+  /**
+   * Biaya bank yang tercatat sebagai baris terpisah lalu digabungkan ke sini.
+   * `amount` sudah termasuk biaya ini, supaya total pengeluaran tidak berubah.
+   */
+  fee?: number;
 }
 
 export interface EngineResult {
@@ -289,6 +294,73 @@ function resolveDirection(
 function pickAmount(cells: { value: number }[]): number | null {
   const nonZero = cells.find((c) => c.value !== 0);
   return nonZero ? Math.abs(nonZero.value) : null;
+}
+
+/** Biaya bank di Indonesia hampir selalu di bawah nilai ini. */
+const MAX_FEE_AMOUNT = 25_000;
+/** Biaya tidak pernah mendekati besarnya transaksi induknya. */
+const MAX_FEE_RATIO = 0.1;
+
+function normalizedDesc(s: string): string {
+  return s.toUpperCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Apakah `candidate` adalah baris biaya dari `parent`?
+ *
+ * Sejumlah bank mencatat pokok dan biayanya sebagai dua baris terpisah dengan
+ * keterangan yang sama persis — misalnya pembelian token PLN Rp 100.000 diikuti
+ * baris Rp 3.000, atau transfer BI-Fast diikuti biaya Rp 2.500.
+ *
+ * Syaratnya sengaja ketat, karena salah gabung akan menghilangkan transaksi yang
+ * sah: harus berurutan, tanggal sama, keterangan identik, arah sama-sama keluar,
+ * nominalnya kecil secara absolut DAN kecil relatif terhadap induknya. Batas
+ * relatif itu yang mencegah dua belanja sah di merchant sama (mis. Rp 30.000
+ * lalu Rp 12.000) tergabung jadi satu.
+ */
+function isFeeRowOf(parent: RawRecord, candidate: RawRecord): boolean {
+  if (parent.date !== candidate.date) return false;
+  if (parent.direction !== "debit" || candidate.direction !== "debit") return false;
+  if (candidate.amount >= parent.amount) return false;
+  if (candidate.amount > MAX_FEE_AMOUNT) return false;
+  if (candidate.amount > parent.amount * MAX_FEE_RATIO) return false;
+  return normalizedDesc(parent.description) === normalizedDesc(candidate.description);
+}
+
+export interface AttachFeesResult {
+  records: RawRecord[];
+  merged: number;
+}
+
+/**
+ * Gabungkan baris biaya ke transaksi induknya.
+ *
+ * `amount` induk menjadi pokok + biaya, sehingga total pengeluaran tetap sama
+ * persis seperti sebelum digabung; besarnya biaya disimpan di `fee` supaya tetap
+ * bisa ditampilkan. Efek sampingnya yang berguna: nominal transaksi berulang
+ * jadi stabil, sehingga langganan bulanan bisa terdeteksi.
+ *
+ * Harus dijalankan SETELAH `reconcileWithBalance`, karena rekonsiliasi
+ * mengandalkan selisih saldo baris demi baris.
+ */
+export function attachFees(records: RawRecord[]): AttachFeesResult {
+  const out: RawRecord[] = [];
+  let merged = 0;
+
+  for (const rec of records) {
+    const parent = out[out.length - 1];
+    if (parent && isFeeRowOf(parent, rec)) {
+      parent.amount = Math.round((parent.amount + rec.amount) * 100) / 100;
+      parent.fee = Math.round(((parent.fee ?? 0) + rec.amount) * 100) / 100;
+      // Saldo diambil dari baris biaya: itu yang paling akhir terjadi.
+      if (rec.balance !== undefined) parent.balance = rec.balance;
+      merged++;
+      continue;
+    }
+    out.push({ ...rec });
+  }
+
+  return { records: out, merged };
 }
 
 /**

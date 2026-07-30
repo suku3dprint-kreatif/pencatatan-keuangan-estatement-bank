@@ -53,6 +53,11 @@ export interface Transaction {
   /** Keterangan mentah dari e-statement, apa adanya. */
   description: string;
   amount: number;
+  /**
+   * Biaya bank yang tercatat sebagai baris terpisah di statement lalu
+   * digabungkan ke transaksi ini. `amount` SUDAH termasuk biaya ini.
+   */
+  fee?: number;
   direction: Direction;
   balance?: number;
   bank: BankId;

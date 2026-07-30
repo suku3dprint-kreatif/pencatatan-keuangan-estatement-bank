@@ -1,5 +1,6 @@
 import type { Transaction } from "@/lib/types";
 import { getCategory } from "@/lib/qris/categories";
+import { GENERIC_MERCHANT_LABELS } from "@/lib/qris/rules";
 
 export interface CategoryTotal {
   categoryId: string;
@@ -50,6 +51,11 @@ export interface Recurring {
   intervalDays: number;
   lastDate: string;
   monthlyEstimate: number;
+  /**
+   * Hanya dua kejadian yang terlihat, jadi ini dugaan — bukan pola yang sudah
+   * terbukti. Muncul kalau datanya baru mencakup dua bulan.
+   */
+  tentative?: boolean;
 }
 
 export interface Anomaly {
@@ -254,15 +260,30 @@ export function computeMetrics(transactions: Transaction[]): Metrics {
   };
 }
 
+/** Rentang jarak hari yang dianggap "sebulan sekali". */
+const MONTHLY_MIN = 25;
+const MONTHLY_MAX = 35;
+
 /**
- * Deteksi langganan / tagihan berulang: merchant yang sama, muncul >= 3 kali,
- * dengan nominal yang relatif stabil dan jarak antar-transaksi yang teratur.
+ * Deteksi langganan / tagihan berulang: merchant yang sama, dengan nominal yang
+ * relatif stabil dan jarak antar-transaksi yang teratur.
+ *
+ * Ada dua tingkat bukti:
+ *
+ * - **≥3 kejadian** — pola sudah terbukti; jarak antar transaksi harus teratur.
+ * - **2 kejadian** — hanya diterima kalau jaraknya persis sebulanan (25–35 hari)
+ *   dan nominalnya nyaris sama, lalu ditandai `tentative`. Tanpa keringanan ini,
+ *   langganan bulanan mustahil terdeteksi dari statement dua bulan: sebulan
+ *   sekali selama dua bulan hanya menghasilkan dua kejadian.
  */
 export function detectRecurring(debits: Transaction[]): Recurring[] {
   const groups = new Map<string, Transaction[]>();
   for (const t of debits) {
     const name = t.merchant?.trim();
-    if (!name || name === "Tidak Teridentifikasi") continue;
+    if (!name || name === "Tidak Teridentifikasi" || name === "QRIS tanpa nama merchant") continue;
+    // Label keranjang ("Tarik Tunai", "Pembayaran Tagihan") mengumpulkan
+    // transaksi yang tidak berhubungan, jadi kemiripan nominalnya kebetulan.
+    if (GENERIC_MERCHANT_LABELS.has(name)) continue;
     const bucket = groups.get(name);
     if (bucket) bucket.push(t);
     else groups.set(name, [t]);
@@ -270,26 +291,40 @@ export function detectRecurring(debits: Transaction[]): Recurring[] {
 
   const out: Recurring[] = [];
   for (const [merchant, txs] of groups) {
-    if (txs.length < 3) continue;
+    if (txs.length < 2) continue;
     const sorted = [...txs].sort((a, b) => (a.date < b.date ? -1 : 1));
     const amounts = sorted.map((t) => t.amount);
     const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
     if (avg <= 0) continue;
 
-    // Nominal harus stabil: simpangan relatif di bawah 20%.
-    const variance = amounts.reduce((s, a) => s + (a - avg) ** 2, 0) / amounts.length;
-    const cv = Math.sqrt(variance) / avg;
-    if (cv > 0.2) continue;
-
-    // Jarak antar transaksi harus cukup teratur.
     const gaps: number[] = [];
     for (let i = 1; i < sorted.length; i++) {
       gaps.push(daysBetween(sorted[i - 1].date, sorted[i].date) - 1);
     }
     const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-    if (avgGap < 5 || avgGap > 45) continue;
-    const gapVariance = gaps.reduce((s, g) => s + (g - avgGap) ** 2, 0) / gaps.length;
-    if (Math.sqrt(gapVariance) > avgGap * 0.5) continue;
+
+    let tentative = false;
+    if (sorted.length === 2) {
+      // Bukti tipis, jadi syaratnya lebih ketat: harus benar-benar sebulanan dan
+      // nominalnya nyaris sama (toleransi 10%, supaya biaya bulanan yang naik
+      // sedikit tetap tertangkap).
+      if (avgGap < MONTHLY_MIN || avgGap > MONTHLY_MAX) continue;
+      // Toleransi relatif 10%, ATAU selisih absolut ≤ Rp 1.000. Yang kedua perlu
+      // karena ambang relatif terlalu keras untuk nominal kecil: biaya bulanan
+      // ATM yang naik Rp 3.000 → Rp 3.500 tetap langganan yang sama.
+      const diff = Math.abs(amounts[0] - amounts[1]);
+      if (diff / avg > 0.1 && diff > 1000) continue;
+      tentative = true;
+    } else {
+      // Nominal harus stabil: simpangan relatif di bawah 20%.
+      const variance = amounts.reduce((s, a) => s + (a - avg) ** 2, 0) / amounts.length;
+      if (Math.sqrt(variance) / avg > 0.2) continue;
+
+      // Jarak antar transaksi harus cukup teratur.
+      if (avgGap < 5 || avgGap > 45) continue;
+      const gapVariance = gaps.reduce((s, g) => s + (g - avgGap) ** 2, 0) / gaps.length;
+      if (Math.sqrt(gapVariance) > avgGap * 0.5) continue;
+    }
 
     out.push({
       merchant,
@@ -299,6 +334,7 @@ export function detectRecurring(debits: Transaction[]): Recurring[] {
       intervalDays: Math.round(avgGap),
       lastDate: sorted[sorted.length - 1].date,
       monthlyEstimate: avg * (30 / Math.max(1, avgGap)),
+      tentative,
     });
   }
   return out.sort((a, b) => b.monthlyEstimate - a.monthlyEstimate);

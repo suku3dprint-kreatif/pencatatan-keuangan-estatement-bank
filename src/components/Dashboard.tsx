@@ -161,7 +161,10 @@ export function Dashboard({
       </div>
 
       {/* ── Analisa detail ─────────────────────────────────────────────────── */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      {/* items-start: tanpa ini ketiga kartu diregangkan setinggi "Temuan" yang
+          paling panjang, dan kartu berulang/anomali menyisakan ruang kosong
+          ratusan piksel. */}
+      <div className="grid items-start gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader title="Temuan" subtitle="Kesimpulan yang bisa langsung ditindaklanjuti" />
           <InsightList insights={insights} />

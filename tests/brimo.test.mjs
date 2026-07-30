@@ -95,7 +95,8 @@ test("CSV BRImo: semua baris terbaca dan saldonya rekonsiliasi", async () => {
   const r = await parseStatement(load("brimo-apr.csv"));
 
   assert.equal(r.bank, "bri");
-  assert.equal(r.meta.rows, 13);
+  // 15 baris di file, satu di antaranya baris biaya yang digabung ke induknya.
+  assert.equal(r.meta.rows, 14);
   assert.equal(r.meta.periodStart, "2026-04-01");
   assert.equal(r.meta.periodEnd, "2026-04-18");
 
@@ -178,13 +179,63 @@ test("top up e-wallet: merchant dari kamus, kategori dari jenis transaksi", asyn
 test("transfer BI-Fast: nama penerima diambil, bukan nama banknya", async () => {
   const r = await parseStatement(load("brimo-apr.csv"));
   const trf = r.transactions.filter((t) => t.description.includes("BFST"));
-  assert.equal(trf.length, 2, "pokok transfer dan biayanya tercatat sebagai dua baris");
-  const pokok = trf.find((t) => t.amount === 90_000);
-  assert.equal(pokok.category, "transfer_keluar");
+  assert.equal(trf.length, 1, "pokok dan biaya transfer digabung jadi satu transaksi");
+  assert.equal(trf[0].category, "transfer_keluar");
   assert.ok(
-    pokok.merchant?.toLowerCase().includes("sari"),
-    `nama penerima harus terbaca, dapatnya "${pokok.merchant}"`,
+    trf[0].merchant?.toLowerCase().includes("sari"),
+    `nama penerima harus terbaca, dapatnya "${trf[0].merchant}"`,
   );
+});
+
+// ── Penggabungan baris biaya ke transaksi induknya ───────────────────────────
+
+test("baris biaya digabung ke induknya, total tidak berubah", async () => {
+  const r = await parseStatement(load("brimo-apr.csv"));
+
+  const trf = r.transactions.find((t) => t.description.includes("BFST"));
+  // Nominal transaksi menjadi pokok + biaya, sehingga total pengeluaran tetap.
+  assert.equal(trf.amount, 92_500);
+  // Besar biayanya tetap tercatat, supaya bisa ditampilkan terpisah di tabel.
+  assert.equal(trf.fee, 2_500);
+
+  // Saldo yang dipakai adalah saldo SETELAH biaya, bukan saldo di antara
+  // keduanya — kalau tidak, grafik saldo meleset sebesar biayanya.
+  assert.equal(trf.balance, 19_400_824.48);
+
+  assert.ok(
+    r.warnings.some((w) => w.level === "info" && w.message.includes("baris biaya")),
+    "penggabungan harus diberitahukan, karena jumlah baris jadi berbeda dari file",
+  );
+});
+
+test("penggabungan biaya tidak mengubah rekonsiliasi saldo", async () => {
+  // Uji paling penting dari fitur ini: apa pun yang digabung, saldo awal +
+  // seluruh mutasi harus tetap sama dengan saldo akhir.
+  for (const file of ["brimo-apr.csv", "brimo-may.csv"]) {
+    const r = await parseStatement(load(file));
+    const net = r.transactions.reduce(
+      (s, t) => s + (t.direction === "credit" ? t.amount : -t.amount),
+      0,
+    );
+    const opening = r.transactions[0].balance
+      + (r.transactions[0].direction === "credit" ? -r.transactions[0].amount : r.transactions[0].amount);
+    const closing = r.transactions[r.transactions.length - 1].balance;
+    assert.ok(
+      Math.abs(opening + net - closing) < 0.01,
+      `${file}: saldo tidak rekonsiliasi setelah biaya digabung`,
+    );
+  }
+});
+
+test("transaksi kecil yang bukan biaya tidak digabung", async () => {
+  const r = await parseStatement(load("brimo-may.csv"));
+  // Dua pembayaran di merchant yang sama pada hari yang sama: Rp 77.100 dan
+  // Rp 20.000. Yang kedua di bawah Rp 25.000 tapi lebih dari 10% yang pertama,
+  // jadi ini belanja terpisah — bukan biaya bank.
+  const aiola = r.transactions.filter((t) => t.description.includes("AIOLA"));
+  assert.equal(aiola.length, 2, "dua transaksi terpisah harus tetap dua baris");
+  assert.deepEqual(aiola.map((t) => t.amount).sort((a, b) => a - b), [20_000, 77_100]);
+  assert.ok(aiola.every((t) => t.fee === undefined));
 });
 
 test("biaya bank terdeteksi", async () => {
@@ -238,9 +289,9 @@ test("gabung file yang sama dua kali: semua duplikat dibuang", async () => {
 });
 
 test("gabung: baris kembar di dalam SATU file tetap dipertahankan", async () => {
-  // Di April ada dua baris "Admin Fee"/"Monthly Fee ATM" pada timestamp sama,
-  // dan dua baris transfer BI-Fast (pokok + biaya). Semuanya sah dan harus utuh,
-  // kalau tidak totalnya berubah.
+  // Di April ada "Admin Fee" dan "Monthly Fee ATM" pada timestamp yang sama,
+  // dan tiga belanja di FamilyMart dengan pola keterangan serupa. Semuanya sah
+  // dan harus utuh, kalau tidak totalnya berubah.
   const apr = await parseStatement(load("brimo-apr.csv"));
   const m = mergeStatements([apr]);
   assert.equal(m.transactions.length, apr.meta.rows);
@@ -260,6 +311,71 @@ test("metrik gabungan menjumlahkan kedua bulan", async () => {
   // "teridentifikasi" — supaya persentasenya jujur.
   assert.equal(metrics.noMerchantInfoCount, m.noMerchantInfo);
   assert.ok(metrics.identifiedShare < 1);
+});
+
+// ── Deteksi beban berulang ───────────────────────────────────────────────────
+
+test("beban berulang: tiga kejadian terbukti, dua kejadian hanya dugaan", async () => {
+  const apr = await parseStatement(load("brimo-apr.csv"));
+  const may = await parseStatement(load("brimo-may.csv"));
+  const { recurring } = computeMetrics(mergeStatements([apr, may]).transactions);
+  const byName = new Map(recurring.map((r) => [r.merchant, r]));
+
+  // Tiga belanja mingguan dengan nominal stabil → pola terbukti.
+  const fm = byName.get("FamilyMart");
+  assert.ok(fm, `FamilyMart harus terdeteksi berulang; yang ada: ${[...byName.keys()]}`);
+  assert.equal(fm.occurrences, 3);
+  assert.ok(!fm.tentative, "tiga kejadian bukan lagi dugaan");
+  assert.equal(fm.intervalDays, 7);
+
+  // Biaya bulanan yang cuma muncul dua kali → diterima, tapi ditandai dugaan.
+  const admin = byName.get("Admin Fee");
+  assert.ok(admin, "biaya bulanan dua kali berjarak sebulan harus terdeteksi");
+  assert.equal(admin.occurrences, 2);
+  assert.equal(admin.tentative, true);
+  assert.equal(admin.intervalDays, 30);
+});
+
+test("beban berulang: kenaikan nominal kecil tetap dianggap langganan yang sama", async () => {
+  // Monthly Fee ATM naik Rp 3.000 → Rp 3.500. Naik 15%, jadi lolos ambang
+  // relatif 10% saja tidak cukup — yang menolongnya adalah selisih absolut
+  // Rp 500 yang jelas masih biaya bulanan yang sama.
+  const apr = await parseStatement(load("brimo-apr.csv"));
+  const may = await parseStatement(load("brimo-may.csv"));
+  const { recurring } = computeMetrics(mergeStatements([apr, may]).transactions);
+
+  const atm = recurring.find((r) => r.merchant === "Monthly Fee ATM");
+  assert.ok(atm, "biaya bulanan ATM harus tetap terdeteksi meski nominalnya naik");
+  assert.equal(atm.avgAmount, 3_250);
+  assert.equal(atm.tentative, true);
+});
+
+test("beban berulang: biaya diberi nama sendiri, bukan disatukan jadi 'Biaya Bank'", async () => {
+  // Kalau semua biaya dilabeli sama, Admin Fee dan Monthly Fee ATM tercampur
+  // dalam satu kelompok dan nominalnya jadi tampak acak — tidak satu pun
+  // terdeteksi sebagai beban bulanan.
+  const r = await parseStatement(load("brimo-apr.csv"));
+  const names = r.transactions.filter((t) => t.kind === "fee").map((t) => t.merchant);
+  assert.deepEqual(names.sort(), ["Admin Fee", "Monthly Fee ATM"]);
+});
+
+test("beban berulang: label keranjang tidak boleh jadi 'langganan'", async () => {
+  // Dua tarik tunai Rp 300.000 berjarak sebulan memenuhi semua syarat angka,
+  // tapi "Tarik Tunai" adalah nama keranjang — bukan pihak yang dibayar.
+  const apr = await parseStatement(load("brimo-apr.csv"));
+  const may = await parseStatement(load("brimo-may.csv"));
+  const m = mergeStatements([apr, may]);
+
+  const tarik = m.transactions.filter((t) => t.category === "tarik_tunai");
+  assert.equal(tarik.length, 2, "fixture memang punya dua tarik tunai bernominal sama");
+
+  const { recurring } = computeMetrics(m.transactions);
+  for (const label of ["Tarik Tunai", "Pembayaran Tagihan", "Transfer Keluar", "Biaya Bank"]) {
+    assert.ok(
+      !recurring.some((r) => r.merchant === label),
+      `"${label}" adalah label keranjang, tidak boleh dilaporkan sebagai beban berulang`,
+    );
+  }
 });
 
 test("gabung file dari bank berbeda memberi peringatan", async () => {

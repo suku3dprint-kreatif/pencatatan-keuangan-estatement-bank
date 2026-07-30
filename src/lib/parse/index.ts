@@ -1,6 +1,6 @@
 import type { ParseResult, ParseWarning, Transaction } from "@/lib/types";
 import { detectBank } from "./banks";
-import { parseLines, type ExtractedLine, type RawRecord } from "./engine";
+import { attachFees, parseLines, type ExtractedLine, type RawRecord } from "./engine";
 import { extractPdf } from "./pdf";
 import { parseCsv } from "./csv";
 import { detectKind, extractQrisMeta } from "@/lib/qris/detect";
@@ -33,6 +33,7 @@ function toTransactions(records: RawRecord[], bank: ParseResult["bank"]): Transa
       date: r.date,
       description: r.description,
       amount: r.amount,
+      fee: r.fee,
       direction: r.direction,
       balance: r.balance,
       bank,
@@ -142,7 +143,18 @@ function finish(args: {
   periodStart?: string;
   periodEnd?: string;
 }): ParseResult {
-  const transactions = toTransactions(args.records, args.profileId);
+  // Digabungkan sebelum diurutkan, karena deteksi pasangan pokok+biaya
+  // mengandalkan urutan asli baris di file.
+  const { records, merged } = attachFees(args.records);
+  const warnings = [...args.warnings];
+  if (merged > 0) {
+    warnings.push({
+      level: "info",
+      message: `${merged} baris biaya digabungkan ke transaksi induknya. Total pengeluaran tidak berubah; besarnya biaya tetap ditampilkan per transaksi.`,
+    });
+  }
+
+  const transactions = toTransactions(records, args.profileId);
   transactions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   const needsAi = transactions.filter(needsAiAnalysis).length;
@@ -152,7 +164,7 @@ function finish(args: {
     bankLabel: args.profileLabel,
     bankConfidence: args.confidence,
     transactions,
-    warnings: args.warnings,
+    warnings,
     meta: {
       fileName: args.fileName,
       fileType: args.fileType,

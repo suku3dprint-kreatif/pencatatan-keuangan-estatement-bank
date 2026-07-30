@@ -59,7 +59,7 @@ baru. Hasil di luar skema tetap divalidasi ulang di sisi server sebelum dipakai.
 
 ## Yang bikin parser-nya tidak gampang salah
 
-Tiga masalah nyata yang ditangani khusus:
+Tujuh masalah nyata yang ditangani khusus:
 
 **1. Kolom debit/kredit terpisah tanpa penanda.**
 Statement Mandiri/BRI/BNI menaruh nominal keluar dan masuk di dua kolom berbeda tanpa tanda `DB`/`CR`.
@@ -87,6 +87,30 @@ Keterangan penarikan tunai BRImo memuat lokasi ATM-nya, mis. `Penarikan tunai di
 SEJAHTERA`. Kamus mencocokkan `RS ` ke fasilitas kesehatan, sehingga tarik tunai terhitung sebagai
 belanja kesehatan. Karena itu jenis transaksi yang strukturnya sudah pasti — tarik tunai, biaya,
 gaji, transfer, top up — selalu mengalahkan kamus merchant dalam menentukan kategori.
+
+**6. Biaya bank sering jadi baris tersendiri, dan itu menyembunyikan langganan.**
+Satu transfer BI-Fast tercatat sebagai dua baris dengan keterangan identik: pokoknya, lalu biayanya.
+Selama dipisah, biaya bulanan yang jumlahnya kecil tampak sebagai transaksi acak dan tidak pernah
+dikenali sebagai beban tetap. Baris biaya karena itu digabungkan ke transaksi induknya — dengan
+syarat ketat, supaya belanja kecil tidak ikut tertelan: harus berurutan, tanggal sama, keduanya
+debet, keterangannya identik, nominalnya lebih kecil dari induknya, **dan** ≤ Rp 25.000 serta ≤ 10%
+dari induknya. Nominal transaksi jadi pokok + biaya, sehingga **total pengeluaran tidak berubah**,
+sementara besar biayanya tetap ditampilkan terpisah di tabel.
+
+Pada dua statement BRImo asli, aturan ini menggabungkan tepat 7 pasangan, semuanya benar, tanpa satu
+pun salah gabung.
+
+**7. Dua bulan statement hanya memberi dua kejadian per langganan.**
+Deteksi pola berulang normalnya menuntut ≥3 kejadian dengan jarak teratur. Tapi langganan bulanan
+mustahil memenuhinya dari statement dua bulan. Karena itu 2 kejadian juga diterima — hanya kalau
+jaraknya persis sebulanan (25–35 hari) dan nominalnya nyaris sama (selisih ≤10% **atau** ≤ Rp 1.000;
+yang kedua perlu karena ambang relatif terlalu keras untuk nominal kecil, mis. biaya bulanan ATM
+Rp 3.000 → Rp 3.500) — lalu ditandai **dugaan** di UI, dan dihitung terpisah di temuan.
+
+Label keranjang seperti `Tarik Tunai`, `Pembayaran Tagihan`, atau `Transfer Keluar` dikecualikan dari
+deteksi ini: itu nama kelompok, bukan pihak yang dibayar, jadi kemiripan nominal di dalamnya
+kebetulan. Sebaliknya biaya bank diberi nama dari keterangannya sendiri (`Admin Fee`,
+`Monthly Fee ATM`) — kalau semuanya dilabeli `Biaya Bank`, nominalnya tercampur dan tampak acak.
 
 Selain itu: tanggal tanpa tahun (`05/01` gaya BCA) dilengkapi dari periode di header statement,
 baris keterangan yang terpotong ke baris berikutnya digabung kembali, nomor referensi panjang
@@ -121,7 +145,7 @@ src/
       primitives.ts           parser angka & tanggal (ID + EN)
       pdf.ts                  ekstraksi teks PDF beserta koordinat x
       csv.ts                  deteksi delimiter + pemetaan nama kolom
-      engine.ts               mesin parser berbasis baris + rekonsiliasi saldo
+      engine.ts               mesin parser berbasis baris, rekonsiliasi saldo, penggabungan biaya
       banks.ts                profil & deteksi bank
     qris/
       detect.ts               deteksi QRIS, ekstraksi NMID/TID/acquirer
@@ -142,7 +166,7 @@ src/
 ## Testing
 
 ```bash
-npm test              # 46 test: unit + integration
+npm test              # 53 test: unit + integration
 npm run lint
 npm run typecheck
 npm run build
@@ -162,6 +186,10 @@ npm run fixtures      # buat e-statement sintetis di tests/fixtures/ (opsional; 
   pemetaan nama kolom teknis, penolakan kolom saldo awal, rekonsiliasi saldo, QRIS tanpa nama
   merchant, lokasi ATM yang tidak boleh jadi merchant, dan penggabungan multi-file — termasuk
   bahwa baris kembar di dalam satu file tetap dipertahankan sementara duplikat lintas file dibuang.
+  Penggabungan baris biaya diuji dari dua arah: bahwa pasangan pokok+biaya menyatu tanpa mengubah
+  rekonsiliasi saldo, dan bahwa belanja kecil di merchant yang sama pada hari yang sama **tidak**
+  ikut tergabung. Deteksi beban berulang diuji pada kedua jalurnya — tiga kejadian yang terbukti dan
+  dua kejadian yang masih dugaan — beserta pengecualian label keranjang.
 
 Fixture dibuat otomatis oleh test-nya, jadi tidak ada file yang perlu di-commit. Nomor rekening,
 nama, dan nominal di semua fixture adalah karangan.

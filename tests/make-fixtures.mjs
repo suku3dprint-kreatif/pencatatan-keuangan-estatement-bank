@@ -222,7 +222,13 @@ const BRIMO_APR = [
   // QRIS dengan nama merchant di REMARK_CUSTOM.
   ["2026-04-03 10:11:20", "QRIS900000000003#9360000900000000002 ESB:NBMB:0007X00P:900000000003", 113000, 0, "Pembayaran QRIS FAMILYMART CONTOH RAYA"],
   ["2026-04-03 12:53:33", "QRIS900000000004#9360000900000000003 ESB:NBMB:0007X00P:900000000004", 43000, 0, "Pembayaran QRIS SPBU 00.000.00 CONTOH"],
+  // Belanja mingguan di merchant yang sama dengan nominal stabil. Tiga kejadian
+  // dalam satu file → pola berulang yang sudah TERBUKTI, bukan dugaan.
+  ["2026-04-10 11:05:12", "QRIS900000000020#9360000900000000002 ESB:NBMB:0007X00P:900000000020", 118000, 0, "Pembayaran QRIS FAMILYMART CONTOH RAYA"],
+  ["2026-04-17 10:48:31", "QRIS900000000021#9360000900000000002 ESB:NBMB:0007X00P:900000000021", 110000, 0, "Pembayaran QRIS FAMILYMART CONTOH RAYA"],
   // Transfer keluar BI-Fast: nama penerima ada di remark, setelah nama bank.
+  // Dua baris berurutan dengan keterangan identik — yang kedua adalah biaya
+  // transfernya, bukan transaksi tersendiri.
   ["2026-04-09 21:14:45", "BFST9000000001 NBMB:BSMDIDJA ESB:NBMB:0008G00F:900000000005", 90000, 0, "Transfer BI-Fast ke BANK SYARIAH MANDIRI - 9000000001 - Sari Wulandari"],
   ["2026-04-09 21:14:45", "BFST9000000001 NBMB:BSMDIDJA ESB:NBMB:0008G00F:900000000005", 2500, 0, "Transfer BI-Fast ke BANK SYARIAH MANDIRI - 9000000001 - Sari Wulandari"],
   // Tarik tunai yang nama ATM-nya mengandung "RS" — tidak boleh jadi Kesehatan.
@@ -245,6 +251,16 @@ const BRIMO_MAY = [
   ["2026-05-02 09:08:26", "BRIVA90000000000004NBMBPDAM ESB:NBMB:0200200P:900000000012", 102650, 0, "Pembayaran BRIVA ke PDAM Kab Contoh - 90000000000004 via BRImo"],
   ["2026-05-09 12:00:49", "QRIS900000000013#9360000900000000004 ESB:NBMB:0007X00P:900000000013", 77100, 0, "Pembayaran QRIS AIOLA EATERY CASHIER 2"],
   ["2026-05-21 05:59:50", "081200000000 T0000000 000000000001 ESB:EJLN:000HF00P:900000000014", 300000, 0, "Penarikan tunai di ATM - RS CONTOH SEJAHTERA via BRImo"],
+  // Makan kedua di merchant yang sama pada hari yang sama. Nominalnya di bawah
+  // Rp 25.000, tapi lebih dari 10% transaksi sebelumnya — ini transaksi
+  // tersendiri dan TIDAK boleh digabung sebagai biaya.
+  ["2026-05-09 19:22:40", "QRIS900000000022#9360000900000000004 ESB:NBMB:0007X00P:900000000022", 20000, 0, "Pembayaran QRIS AIOLA EATERY CASHIER 2"],
+  // Biaya bulanan yang sama seperti April dengan nominal sedikit berubah:
+  // Admin Fee naik 250 (masih di bawah 10%), Monthly Fee ATM naik 500 (di atas
+  // 10% tapi selisihnya kecil secara absolut). Keduanya harus tetap terbaca
+  // sebagai beban bulanan yang sama.
+  ["2026-05-16 23:59:59", "Admin Fee", 6250, 0, "Admin Fee"],
+  ["2026-05-16 23:59:59", "Monthly Fee ATM", 3500, 0, "Monthly Fee ATM"],
   ["2026-05-27 18:14:01", "NBMB RATNA DEWI TO PEMILIK REKENING ESB:NBMB:0001500F:900000000015", 0, 10000000, "Transfer Dari Ratna Dewi via BRImo"],
 ];
 

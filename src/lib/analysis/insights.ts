@@ -72,10 +72,17 @@ export function buildInsights(m: Metrics, ctx?: InsightContext): Insight[] {
   // ── Langganan berulang ────────────────────────────────────────────────────
   if (m.recurring.length > 0) {
     const monthly = m.recurring.reduce((s, r) => s + r.monthlyEstimate, 0);
+    // Yang baru terlihat dua kali masih dugaan. Kalau tidak disebut, angka beban
+    // tetap di atas terkesan lebih pasti daripada buktinya.
+    const tentative = m.recurring.filter((r) => r.tentative).length;
+    const catatan =
+      tentative === 0
+        ? ""
+        : ` ${tentative} di antaranya baru terlihat dua kali, jadi masih dugaan.`;
     out.push({
       tone: monthly > m.expense * 0.15 ? "warning" : "neutral",
       title: `${m.recurring.length} pembayaran berulang terdeteksi`,
-      body: `Perkiraan beban tetap sekitar ${rupiah(monthly)} per bulan, dipimpin ${m.recurring[0].merchant} (${rupiah(m.recurring[0].avgAmount)} tiap ~${m.recurring[0].intervalDays} hari). Cek apakah semuanya masih kamu pakai.`,
+      body: `Perkiraan beban tetap sekitar ${rupiah(monthly)} per bulan, dipimpin ${m.recurring[0].merchant} (${rupiah(m.recurring[0].avgAmount)} tiap ~${m.recurring[0].intervalDays} hari).${catatan} Cek apakah semuanya masih kamu pakai.`,
     });
   }
 

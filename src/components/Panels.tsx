@@ -49,6 +49,7 @@ export function RecurringPanel({ items }: { items: Recurring[] }) {
     return <Empty>Tidak ada pembayaran berulang yang terdeteksi.</Empty>;
   }
   const total = items.reduce((s, r) => s + r.monthlyEstimate, 0);
+  const anyTentative = items.some((r) => r.tentative);
 
   return (
     <div>
@@ -60,11 +61,18 @@ export function RecurringPanel({ items }: { items: Recurring[] }) {
         {items.slice(0, 8).map((r) => (
           <li key={r.merchant} className="flex items-baseline justify-between gap-3 py-2">
             <div className="min-w-0">
-              <p className="truncate text-xs font-medium text-ink">
-                <span aria-hidden className="mr-1">
-                  {getCategory(r.categoryId).emoji}
-                </span>
-                {r.merchant}
+              <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+                <span aria-hidden>{getCategory(r.categoryId).emoji}</span>
+                <span className="truncate">{r.merchant}</span>
+                {r.tentative ? (
+                  <span
+                    className="shrink-0 rounded-full border px-1.5 text-[10px] font-normal text-ink-2"
+                    style={{ borderColor: "var(--status-warning)" }}
+                    title="Baru terlihat dua kali, jadi ini masih dugaan"
+                  >
+                    dugaan
+                  </span>
+                ) : null}
               </p>
               <p className="text-[11px] text-ink-muted">
                 {angka(r.occurrences)}x · tiap ~{r.intervalDays} hari · terakhir {tanggal(r.lastDate)}
@@ -77,6 +85,12 @@ export function RecurringPanel({ items }: { items: Recurring[] }) {
           </li>
         ))}
       </ul>
+      {anyTentative ? (
+        <p className="mt-3 border-t border-hairline pt-2 text-[11px] leading-relaxed text-ink-muted">
+          Yang bertanda <em>dugaan</em> baru terlihat dua kali dengan jarak sebulanan — upload
+          statement bulan berikutnya untuk memastikan.
+        </p>
+      ) : null}
     </div>
   );
 }

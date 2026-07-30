@@ -50,14 +50,54 @@ const KIND_CATEGORY: Partial<Record<TxKind, { category: string; merchant: string
   bill: { category: "tagihan", merchant: "Pembayaran Tagihan", note: "Terdeteksi pembayaran tagihan" },
 };
 
+/**
+ * Label bawaan di atas adalah nama KERANJANG, bukan nama pihak yang dibayar:
+ * setiap tarik tunai jadi "Tarik Tunai", setiap tagihan tanpa nama biller jadi
+ * "Pembayaran Tagihan". Analisa yang mengelompokkan per merchant harus
+ * melewatinya — dua tarik tunai Rp 300.000 berjarak sebulan bukan langganan.
+ *
+ * Nama yang diambil dari keterangan aslinya (lawan transaksi transfer, atau
+ * hasil `feeLabel`) tidak termasuk di sini, karena itu memang spesifik.
+ */
+export const GENERIC_MERCHANT_LABELS: ReadonlySet<string> = new Set(
+  Object.values(KIND_CATEGORY).map((v) => v.merchant),
+);
+
+/** Singkatan yang harus tetap huruf besar setelah di-title-case. */
+const ACRONYMS = new Set(["ATM", "PLN", "PDAM", "QRIS", "SMS", "VA", "BPJS", "TV", "PPN"]);
+
 /** Ubah "NASI GORENG PAK BUDI" jadi "Nasi Goreng Pak Budi". */
 export function titleCase(text: string): string {
   return text
-    .toLowerCase()
     .split(/\s+/)
     .filter(Boolean)
-    .map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)))
+    .map((w) => {
+      const upper = w.toUpperCase();
+      if (ACRONYMS.has(upper)) return upper;
+      const lower = w.toLowerCase();
+      return lower.length <= 2 ? upper : lower[0].toUpperCase() + lower.slice(1);
+    })
     .join(" ");
+}
+
+/** Token kanal yang tidak menjelaskan biayanya. */
+const FEE_NOISE = new Set([
+  "VIA", "BRIMO", "ESB", "NBMB", "BRI", "BANK", "IDR", "RP", "TRANSAKSI", "TRX",
+]);
+
+/**
+ * Nama untuk baris biaya, diambil dari keterangannya sendiri.
+ *
+ * Kalau semuanya dilabeli "Biaya Bank", biaya admin bulanan dan biaya bulanan
+ * ATM tercampur jadi satu kelompok dan nominalnya jadi tampak acak — sehingga
+ * keduanya tidak pernah terdeteksi sebagai beban bulanan yang berulang.
+ */
+export function feeLabel(description: string, fallback: string): string {
+  const words = normalize(description)
+    .split(" ")
+    .filter((w) => /^[A-Z]{2,}$/.test(w) && !FEE_NOISE.has(w));
+  if (words.length === 0) return fallback;
+  return titleCase(words.slice(0, 4).join(" "));
 }
 
 function matchDictionary(haystack: string): { merchant: string; category: string } | null {
@@ -126,7 +166,12 @@ export function classifyByRules(
     const dictMerchant = KIND_IGNORES_DICTIONARY_MERCHANT.has(kind) ? undefined : dict?.merchant;
     const counterparty =
       kind === "transfer_out" || kind === "transfer_in" ? extractCounterparty(description) : null;
-    const merchant = dictMerchant ?? (counterparty ? titleCase(counterparty) : byKind.merchant);
+    // Biaya diberi nama dari keterangannya sendiri, supaya jenis biaya yang
+    // berbeda tidak tercampur dalam satu kelompok.
+    const merchant =
+      kind === "fee"
+        ? feeLabel(description, byKind.merchant)
+        : (dictMerchant ?? (counterparty ? titleCase(counterparty) : byKind.merchant));
     return {
       merchant,
       category: byKind.category,

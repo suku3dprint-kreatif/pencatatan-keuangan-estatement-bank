@@ -113,15 +113,40 @@ src/
 ## Testing
 
 ```bash
-npm test              # 22 unit test untuk parser angka/tanggal/delimiter/klasifikasi
-npm run fixtures      # buat e-statement sintetis di tests/fixtures/
+npm test              # 27 test: 22 unit + 5 integration
+npm run lint
 npm run typecheck
 npm run build
+npm run fixtures      # buat e-statement sintetis di tests/fixtures/ (opsional; `npm test` sudah otomatis)
 ```
 
-Fixture yang dihasilkan menguji empat jalur berbeda: PDF dua kolom (BSI), PDF satu kolom dengan
-penanda `DB` dan tanggal tanpa tahun (BCA), CSV `;` dengan baris basa-basi sebelum header (Mandiri),
-dan CSV tanpa header yang harus jatuh ke mesin parser baris.
+- **Unit test** (`tests/parse.test.mjs`) — parser angka & tanggal, deteksi delimiter, deteksi bank,
+  rekonsiliasi saldo, deteksi QRIS, klasifikasi rule-based, kunci deduplikasi.
+- **Integration test** (`tests/statement.test.mjs`) — menjalankan `parseStatement` terhadap fixture
+  sintetis dan memeriksa hasil akhirnya: jumlah transaksi, arah dana, nominal, saldo, kategori.
+  Empat jalur parser diuji: PDF dua kolom debet/kredit (BSI), PDF satu kolom dengan penanda `DB` dan
+  tanggal tanpa tahun (BCA), CSV `;` dengan baris basa-basi sebelum header (Mandiri), dan CSV tanpa
+  header yang harus jatuh ke mesin parser baris. Termasuk satu kasus file sampah, untuk memastikan
+  parser memberi peringatan alih-alih error.
+
+Fixture dibuat otomatis oleh integration test, jadi tidak ada file yang perlu di-commit.
+
+### CI
+
+`.github/workflows/ci.yml` menjalankan `lint → typecheck → test → build` di Node 22 pada setiap
+pull request, plus job terpisah untuk `npm audit` dependensi produksi (severity high ke atas).
+Audit dipisah karena bisa memerah gara-gara advisory baru yang terbit di hulu, bukan karena
+perubahan di PR-nya.
+
+Build di CI **sengaja dijalankan tanpa `ANTHROPIC_API_KEY`** — itu memverifikasi bahwa aplikasi
+memang tetap bisa dipakai tanpa AI.
+
+### Catatan `overrides` di package.json
+
+Tiga paket transitif dipaksa ke versi yang sudah menutup CVE, karena versi yang dibawa induknya
+masih rentan: `sharp` (CVE libvips; sebenarnya tidak terpakai karena app ini tidak memakai
+`next/image`), `postcss`, dan `brace-expansion` (rantai dependensi ESLint). Tanpa override ini
+`npm audit` melaporkan kerentanan high. Override bisa dihapus begitu paket induknya naik sendiri.
 
 ### Menguji jalur AI tanpa API key
 

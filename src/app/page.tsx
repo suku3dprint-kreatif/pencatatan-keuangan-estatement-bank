@@ -179,21 +179,33 @@ export default function Home() {
 
   const handleCategoryChange = useCallback(
     (id: string, categoryId: string) => {
-      setTransactions((prev) => {
-        const target = prev.find((t) => t.id === id);
-        if (!target) return prev;
-        const key = dedupKey(target.description);
-        const nextOverrides = { ...overrides, [key]: categoryId };
-        setOverrides(nextOverrides);
-        saveOverrides(nextOverrides);
-        return prev.map((t) =>
+      const target = transactions.find((t) => t.id === id);
+      if (!target) return;
+      const key = dedupKey(target.description);
+
+      // Efek samping (localStorage) dikerjakan di luar updater setState —
+      // updater harus murni, karena React boleh memanggilnya lebih dari sekali.
+      const nextOverrides = { ...overrides, [key]: categoryId };
+      setOverrides(nextOverrides);
+      saveOverrides(nextOverrides);
+
+      // Koreksi berlaku untuk semua transaksi dengan pola keterangan yang sama,
+      // bukan hanya baris yang diklik.
+      setTransactions((prev) =>
+        prev.map((t) =>
           dedupKey(t.description) === key
-            ? { ...t, category: categoryId, source: "manual" as const, confidence: 1, note: "Dikoreksi manual" }
+            ? {
+                ...t,
+                category: categoryId,
+                source: "manual" as const,
+                confidence: 1,
+                note: "Dikoreksi manual",
+              }
             : t,
-        );
-      });
+        ),
+      );
     },
-    [overrides],
+    [overrides, transactions],
   );
 
   const reset = useCallback(() => {

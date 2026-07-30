@@ -57,6 +57,11 @@ Dua hal yang perlu diperhatikan di serverless:
 - **Batas ukuran upload.** Platform menolak request body di atas ~4,5 MB sebelum route
   handler-nya jalan, jadi `MAX_UPLOAD_MB` default-nya 4. E-statement satu bulan biasanya jauh di
   bawah itu.
+- **Worker pdfjs harus dipaksa ikut ke bundle.** pdfjs memuat `pdf.worker.mjs` lewat import
+  dinamis, jadi file tracing Next tidak melihatnya dan hanya menyalin `pdf.mjs`. Di mesin sendiri
+  tidak pernah kelihatan karena `node_modules` utuh; di serverless, upload PDF gagal dengan
+  `Setting up fake worker failed`. `outputFileTracingIncludes` di `next.config.ts` menyertakan
+  worker dan font standarnya secara eksplisit.
 - **Batas durasi function.** `/api/enrich` disetel `maxDuration = 60` supaya cocok dengan plan
   Hobby. Yang menentukan bukan jumlah transaksinya, tapi berapa **putaran** panggilan API yang
   dibutuhkan: item dipecah per 30 dan dijalankan 3 paralel, jadi `ENRICH_MAX_ITEMS = 90` menjamin

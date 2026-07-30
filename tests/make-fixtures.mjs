@@ -170,6 +170,91 @@ for (const [date, desc, cbg, mutasi, marker, balance] of BROWS) {
 }
 writeFileSync(join(outDir, "statement-bca.pdf"), buildPdf([bcaCells]));
 
+// ── CSV gaya ekspor BRImo ────────────────────────────────────────────────────
+// Meniru struktur asli ekspor BRImo: 19 kolom, delimiter koma, semua field
+// dikutip, nominal bergaya Inggris tanpa pemisah ribuan (".00"), kolom saldo
+// AWAL dan AKHIR keduanya ada, dan DESK_TRAN (kode teknis) terpisah dari
+// REMARK_CUSTOM (keterangan versi manusia).
+//
+// Nomor rekening, nama, dan nominal di sini semuanya karangan.
+const BRIMO_HEADER = [
+  "ID", "NOREK", "TGL_TRAN", "TGL_EFEKTIF", "JAM_TRAN", "SEQ", "DESK_TRAN",
+  "SALDO_AWAL_MUTASI", "MUTASI_DEBET", "MUTASI_KREDIT", "SALDO_AKHIR_MUTASI",
+  "GLSIGN", "TRUSER", "KODE_TRAN", "KODE_TRAN_TELLER", "TRREMK", "TLBDS1",
+  "TLBDS2", "REMARK_CUSTOM",
+];
+
+const NOREK = "000000000000001";
+
+/** rows: [tanggal jam, desk_tran, debet, kredit, remark] */
+function brimoCsv(input, openingBalance) {
+  const out = [BRIMO_HEADER.map((h) => `"${h}"`).join(",")];
+  // Ekspor bank selalu urut waktu, dan saldo berjalannya bergantung pada urutan
+  // itu. Fixture harus mengikuti supaya rekonsiliasi saldo bisa diuji.
+  const rows = [...input].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  let balance = openingBalance;
+  rows.forEach(([stamp, desk, debit, credit, remark], i) => {
+    const before = balance;
+    balance = balance - debit + credit;
+    const cell = (v) => `"${v}"`;
+    // Nominal nol ditulis ".00" — persis seperti ekspor aslinya.
+    const money = (v) => (v === 0 ? ".00" : v.toFixed(2));
+    out.push(
+      [
+        cell(i + 1), cell(NOREK), cell(stamp), cell(stamp),
+        cell(stamp.slice(11).replace(/:/g, "")), cell(String(500000 + i)),
+        cell(desk), cell(before.toFixed(2)), cell(money(debit)), cell(money(credit)),
+        cell(balance.toFixed(2)), cell(credit > 0 ? "Cr" : "Db"), cell("8888001"),
+        cell("2"), cell("8508"), cell(desk.split(" ")[0]), cell(""), cell(""),
+        cell(remark),
+      ].join(","),
+    );
+  });
+  return out.join("\n") + "\n";
+}
+
+// Semua nomor rekening, virtual account, nomor pelanggan, nomor HP, dan nama di
+// bawah ini karangan. Yang ditiru hanya BENTUK-nya, bukan datanya.
+const BRIMO_APR = [
+  // QRIS yang keterangannya HANYA kode: tidak ada nama merchant sama sekali.
+  ["2026-04-01 19:01:04", "QRISRNS900000000001#9360000900000000001 ESB:NBMB:000R100P:900000000001", 923434, 0, "QRISRNS900000000001#9360000900000000001"],
+  ["2026-04-02 12:41:39", "QRISRNS900000000002#9360000900000000001 ESB:NBMB:000R100P:900000000002", 230130, 0, "QRISRNS900000000002#9360000900000000001"],
+  // QRIS dengan nama merchant di REMARK_CUSTOM.
+  ["2026-04-03 10:11:20", "QRIS900000000003#9360000900000000002 ESB:NBMB:0007X00P:900000000003", 113000, 0, "Pembayaran QRIS FAMILYMART CONTOH RAYA"],
+  ["2026-04-03 12:53:33", "QRIS900000000004#9360000900000000003 ESB:NBMB:0007X00P:900000000004", 43000, 0, "Pembayaran QRIS SPBU 00.000.00 CONTOH"],
+  // Transfer keluar BI-Fast: nama penerima ada di remark, setelah nama bank.
+  ["2026-04-09 21:14:45", "BFST9000000001 NBMB:BSMDIDJA ESB:NBMB:0008G00F:900000000005", 90000, 0, "Transfer BI-Fast ke BANK SYARIAH MANDIRI - 9000000001 - Sari Wulandari"],
+  ["2026-04-09 21:14:45", "BFST9000000001 NBMB:BSMDIDJA ESB:NBMB:0008G00F:900000000005", 2500, 0, "Transfer BI-Fast ke BANK SYARIAH MANDIRI - 9000000001 - Sari Wulandari"],
+  // Tarik tunai yang nama ATM-nya mengandung "RS" — tidak boleh jadi Kesehatan.
+  ["2026-04-18 08:10:24", "081200000000 00009999 000999000001 ESB:ATM1:009GG00W:000999000001", 300000, 0, "Penarikan tunai di ATM - RS CONTOH SEJAHTERA via BRImo"],
+  // Tagihan lewat virtual account.
+  ["2026-04-05 12:48:23", "PLN-PRA 99900011122NBMB9000000000000001 ESB:NBMB:20006PLN:900000000006", 100000, 0, "Pembelian Token PLN 99900011122 via BRImo"],
+  ["2026-04-16 17:32:52", "BRIVA90000000000001NBMBTRAVELOKA ESB:NBMB:000CD00P:900000000007", 150059, 0, "Pembayaran BRIVA ke TRAVELOKA INDONESIA - 90000000000001 - TRAVELOKA via BRImo"],
+  // Top up e-wallet: merchant dari kamus, kategori dari jenis transaksi.
+  ["2026-04-16 16:57:56", "BRIVA90000000000002NBMBSHOPEE ESB:NBMB:000CD00P:900000000008", 60000, 0, "Top Up Shopee 0812xxxx000 via BRImo"],
+  // Biaya bank.
+  ["2026-04-16 23:59:59", "Admin Fee", 6000, 0, "Admin Fee"],
+  ["2026-04-16 23:59:59", "Monthly Fee ATM", 3000, 0, "Monthly Fee ATM"],
+  // Uang masuk.
+  ["2026-04-02 17:30:24", "NBMB BUDI HARTONO TO PEMILIK REKENING ESB:NBMB:0001500F:900000000009", 0, 200000, "Transfer Dari Budi Hartono via BRImo"],
+];
+
+const BRIMO_MAY = [
+  ["2026-05-01 09:34:05", "QRISRNS900000000010#9360000900000000001 ESB:NBMB:000R100P:900000000010", 32875, 0, "QRISRNS900000000010#9360000900000000001"],
+  ["2026-05-01 18:33:17", "BRIVA90000000000003NBMBMyTelkomsel ESB:NBMB:000CD00P:900000000011", 51000, 0, "Pembayaran BRIVA ke PT. Finnet Indonesia (My Telkomsel-Telkomsel) - MyTelkomsel via BRImo"],
+  ["2026-05-02 09:08:26", "BRIVA90000000000004NBMBPDAM ESB:NBMB:0200200P:900000000012", 102650, 0, "Pembayaran BRIVA ke PDAM Kab Contoh - 90000000000004 via BRImo"],
+  ["2026-05-09 12:00:49", "QRIS900000000013#9360000900000000004 ESB:NBMB:0007X00P:900000000013", 77100, 0, "Pembayaran QRIS AIOLA EATERY CASHIER 2"],
+  ["2026-05-21 05:59:50", "081200000000 T0000000 000000000001 ESB:EJLN:000HF00P:900000000014", 300000, 0, "Penarikan tunai di ATM - RS CONTOH SEJAHTERA via BRImo"],
+  ["2026-05-27 18:14:01", "NBMB RATNA DEWI TO PEMILIK REKENING ESB:NBMB:0001500F:900000000015", 0, 10000000, "Transfer Dari Ratna Dewi via BRImo"],
+];
+
+// Saldo awal Mei dibuat menyambung dari saldo akhir April, seperti file asli.
+const APR_OPENING = 20702888.48;
+const aprNet = BRIMO_APR.reduce((s, [, , d, c]) => s - d + c, 0);
+
+writeFileSync(join(outDir, "brimo-apr.csv"), brimoCsv(BRIMO_APR, APR_OPENING), "utf8");
+writeFileSync(join(outDir, "brimo-may.csv"), brimoCsv(BRIMO_MAY, APR_OPENING + aprNet), "utf8");
+
 // ── CSV tanpa header yang dikenali → harus jatuh ke mesin parser baris ───────
 const headerless = [
   "10/04/2026,QRIS 1234 ID1020012312312 WARTEG BAHARI,45000,1955000",

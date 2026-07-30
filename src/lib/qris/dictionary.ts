@@ -19,6 +19,7 @@ export const MERCHANTS: MerchantEntry[] = [
   { match: ["ALFAMIDI"], merchant: "Alfamidi", category: "groceries" },
   { match: ["ALFAMART", "ALFAMRT"], merchant: "Alfamart", category: "groceries" },
   { match: ["ALFA EXPRESS", "LAWSON"], merchant: "Lawson", category: "groceries" },
+  { match: ["FAMILYMART", "FAMILY MART"], merchant: "FamilyMart", category: "groceries" },
   { match: ["SUPERINDO"], merchant: "Superindo", category: "groceries" },
   { match: ["HYPERMART"], merchant: "Hypermart", category: "groceries" },
   { match: ["TRANSMART", "CARREFOUR"], merchant: "Transmart", category: "groceries" },
@@ -61,6 +62,8 @@ export const MERCHANTS: MerchantEntry[] = [
   { match: ["WARTEG", "WARUNG", "WARUNK", "KANTIN", "KEDAI"], merchant: "Warung Makan", category: "makan_minum" },
   { match: ["BAKSO", "MIE AYAM", "SOTO", "SATE", "NASI GORENG", "SEBLAK", "SEBLAK"], merchant: "Makanan Lokal", category: "makan_minum" },
   { match: ["MARTABAK", "TERANG BULAN", "PISANG", "GORENGAN"], merchant: "Jajanan", category: "makan_minum" },
+  { match: ["LALAPAN", "PENYETAN", "PECEL LELE"], merchant: "Lalapan", category: "makan_minum" },
+  { match: ["TAHU CAMPUR", "RAWON", "RUJAK", "GADO GADO", "PECEL"], merchant: "Makanan Lokal", category: "makan_minum" },
 
   // ── Food delivery & marketplace ───────────────────────────────────────────
   { match: ["GOFOOD", "GO FOOD"], merchant: "GoFood", category: "makan_minum" },
@@ -72,6 +75,7 @@ export const MERCHANTS: MerchantEntry[] = [
   { match: ["BLIBLI"], merchant: "Blibli", category: "belanja_online" },
   { match: ["BUKALAPAK"], merchant: "Bukalapak", category: "belanja_online" },
   { match: ["TIKTOK SHOP", "TOKOPEDIA TIKTOK"], merchant: "TikTok Shop", category: "belanja_online" },
+  { match: ["SPAYLATER", "SHOPEE PAYLATER", "SHOPEEPAY LATER"], merchant: "SPayLater", category: "belanja_online" },
   { match: ["ZALORA", "UNIQLO", "H M ", "ERIGO", "MATAHARI"], merchant: "Fashion Retail", category: "fashion_kecantikan" },
 
   // ── Transportasi ──────────────────────────────────────────────────────────
@@ -87,7 +91,9 @@ export const MERCHANTS: MerchantEntry[] = [
   { match: ["TRAVELOKA", "TIKET COM", "TIKETCOM", "PEGIPEGI", "AGODA", "BOOKING COM"], merchant: "Travel Booking", category: "hiburan" },
 
   // ── Tagihan & utilitas ────────────────────────────────────────────────────
-  { match: ["PLN", "LISTRIK", "TOKEN LISTRIK"], merchant: "PLN", category: "tagihan" },
+  // "LISTRIK" polos sengaja TIDAK dipakai: toko listrik/elektronik sering
+  // bernama begitu (mis. "TACIK LISTRIK"), dan memetakannya ke PLN salah.
+  { match: ["PLN", "TOKEN LISTRIK", "TAGIHAN LISTRIK", "PLN-PRA"], merchant: "PLN", category: "tagihan" },
   { match: ["PDAM", "AIR MINUM", "PALYJA", "AETRA"], merchant: "PDAM", category: "tagihan" },
   { match: ["TELKOMSEL", "TSEL", "BY U", "BYU"], merchant: "Telkomsel", category: "tagihan" },
   { match: ["INDIHOME", "TELKOM INDONESIA"], merchant: "IndiHome", category: "tagihan" },
@@ -120,6 +126,7 @@ export const MERCHANTS: MerchantEntry[] = [
   { match: ["SPP", "UANG SEKOLAH", "UNIVERSITAS", "SEKOLAH", "KAMPUS", "YAYASAN PENDIDIKAN"], merchant: "Biaya Pendidikan", category: "pendidikan" },
   { match: ["RUANGGURU", "ZENIUS", "BIMBEL", "UDEMY", "COURSERA", "SKILL ACADEMY"], merchant: "Kursus Online", category: "pendidikan" },
   { match: ["GRAMEDIA", "TOKO BUKU"], merchant: "Gramedia", category: "pendidikan" },
+  { match: ["ATK", "ALAT TULIS", "FOTOKOPI", "FOTOCOPY", "PERCETAKAN"], merchant: "Alat Tulis & Percetakan", category: "pendidikan" },
 
   // ── Fashion & kecantikan ──────────────────────────────────────────────────
   { match: ["SOCIOLLA", "SEPHORA", "THE BODY SHOP", "SKINTIFIC", "SOMETHINC"], merchant: "Skincare & Kosmetik", category: "fashion_kecantikan" },

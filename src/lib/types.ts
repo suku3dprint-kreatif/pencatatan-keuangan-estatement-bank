@@ -31,6 +31,12 @@ export type TxKind =
 export interface QrisMeta {
   /** National Merchant ID, format ID + 13–15 digit. */
   nmid?: string;
+  /**
+   * Merchant PAN QRIS (936 + 12–16 digit). Perlu diketahui: sebagian bank
+   * mencantumkan PAN penyelenggara/acquirer di sini, bukan PAN merchant-nya,
+   * jadi nilai yang sama bisa muncul di banyak transaksi berbeda.
+   */
+  mpan?: string;
   terminalId?: string;
   /** Reference Retrieval Number / nomor referensi panjang. */
   reference?: string;
@@ -60,6 +66,14 @@ export interface Transaction {
   note?: string;
   /** Nomor halaman / baris asal, untuk debugging parser. */
   origin?: string;
+  /** Nama file statement asalnya — relevan saat menggabungkan beberapa file. */
+  sourceFile?: string;
+  /**
+   * Keterangan di statement memang tidak memuat nama merchant sama sekali,
+   * hanya kode transaksi dan merchant PAN. Ini bukan "belum dianalisa" — tidak
+   * ada yang bisa dianalisa, jadi transaksi ini tidak dikirim ke AI.
+   */
+  noMerchantInfo?: boolean;
 }
 
 export interface ParseWarning {

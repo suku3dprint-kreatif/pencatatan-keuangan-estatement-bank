@@ -1,13 +1,15 @@
 # Analisa E-Statement Bank
 
-Upload e-statement bank berupa **PDF atau CSV**, dan tools ini akan:
+Upload e-statement bank berupa **PDF atau CSV** — satu file atau beberapa bulan sekaligus — dan
+tools ini akan:
 
 1. **Membaca transaksinya** — tahu layout kolom debit/kredit per bank, dan mengoreksi arah dana dari selisih saldo berjalan.
-2. **Menebak merchant di balik kode QRIS** — keterangan seperti `QRIS 1234567890123 ID1020012345678 WRG MKN BU SRI` diterjemahkan jadi `Warung Makan Bu Sri`, kategori **Makan & Minum**.
-3. **Menampilkan visualisasi** — arus kas bulanan, pengeluaran per kategori, top merchant, saldo harian, pola per hari.
-4. **Menganalisa lebih dalam** — pembayaran berulang/langganan, transaksi anomali, laju pengeluaran, tingkat menabung.
+2. **Menggabungkan beberapa file** jadi satu analisa, dengan deteksi periode tumpang tindih dan pembuangan transaksi ganda.
+3. **Menebak merchant di balik kode QRIS** — keterangan seperti `QRIS 1234567890123 ID1020012345678 WRG MKN BU SRI` diterjemahkan jadi `Warung Makan Bu Sri`, kategori **Makan & Minum**.
+4. **Menampilkan visualisasi** — arus kas bulanan, pengeluaran per kategori, top merchant, saldo harian, pola per hari.
+5. **Menganalisa lebih dalam** — pembayaran berulang/langganan, transaksi anomali, laju pengeluaran, tingkat menabung.
 
-Bank yang layout-nya sudah dikenali: **BSI, Mandiri/Livin', BRI/BRImo, BNI, BCA, Jago, SeaBank, blu, Neo Commerce** — plus mesin *generic* untuk format lain.
+Bank yang layout-nya sudah dikenali: **BSI, Mandiri/Livin', BRI/BRImo, BNI, BCA, Jago, SeaBank, blu, Neo Commerce** — plus mesin *generic* untuk format lain. Ekspor CSV BRImo sudah diuji dengan file asli.
 
 ---
 
@@ -73,9 +75,36 @@ Nominal `22.000,00` membuat heuristik bawaan papaparse menyimpulkan delimiter-ny
 setiap nominal terbelah dua. Karena itu delimiter dideteksi sendiri, dengan `;` dan tab
 diprioritaskan di atas `,`.
 
+**4. Nama kolom bank tidak seragam, dan ada dua kolom saldo.**
+Ekspor BRImo memakai `TGL_TRAN`, `DESK_TRAN`, `MUTASI_DEBET`. Pencocokan nama kolom karena itu
+dilakukan per kata, bukan per substring — kalau tidak, `TGL_TRAN` tidak terbaca sebagai tanggal dan
+seluruh file gagal diparse. Ekspor itu juga punya `SALDO_AWAL_MUTASI` **dan**
+`SALDO_AKHIR_MUTASI`; yang "awal" sengaja ditolak, karena kalau terambil, grafik saldo dan
+rekonsiliasi arah dana bergeser satu baris.
+
+**5. Lokasi ATM bukan nama merchant.**
+Keterangan penarikan tunai BRImo memuat lokasi ATM-nya, mis. `Penarikan tunai di ATM - RS CONTOH
+SEJAHTERA`. Kamus mencocokkan `RS ` ke fasilitas kesehatan, sehingga tarik tunai terhitung sebagai
+belanja kesehatan. Karena itu jenis transaksi yang strukturnya sudah pasti — tarik tunai, biaya,
+gaji, transfer, top up — selalu mengalahkan kamus merchant dalam menentukan kategori.
+
 Selain itu: tanggal tanpa tahun (`05/01` gaya BCA) dilengkapi dari periode di header statement,
-baris keterangan yang terpotong ke baris berikutnya digabung kembali, dan nomor referensi panjang
-maupun tahun polos (`2026`) tidak ikut terbaca sebagai nominal.
+baris keterangan yang terpotong ke baris berikutnya digabung kembali, nomor referensi panjang
+maupun tahun polos (`2026`) tidak ikut terbaca sebagai nominal, dan nama penerima transfer diambil
+dari bagian setelah nama bank (`… ke BANK X - 123 - Sari Wulandari` → `Sari Wulandari`, bukan
+`Syariah Mandiri`).
+
+### Kalau statement memang tidak mencantumkan nama merchant
+
+Sebagian bank mengekspor transaksi QRIS hanya sebagai kode transaksi dan merchant PAN, tanpa nama
+merchant sama sekali — contohnya `QRISRNS119003178520#9360000210027337763`. Transaksi seperti ini:
+
+- ditandai `QRIS tanpa nama merchant` dan **tidak dikirim ke AI** — tidak ada informasi untuk
+  dianalisa, jadi mengirimnya hanya membuang token dan memancing nama merchant karangan;
+- tidak dihitung sebagai "teridentifikasi", supaya persentasenya jujur;
+- dilaporkan sebagai temuan tersendiri, lengkap dengan nilai totalnya.
+
+Untuk melacaknya, cocokkan tanggal dan nominalnya dengan riwayat di aplikasi mobile banking.
 
 ---
 
@@ -113,7 +142,7 @@ src/
 ## Testing
 
 ```bash
-npm test              # 27 test: 22 unit + 5 integration
+npm test              # 46 test: unit + integration
 npm run lint
 npm run typecheck
 npm run build
@@ -128,8 +157,14 @@ npm run fixtures      # buat e-statement sintetis di tests/fixtures/ (opsional; 
   tanggal tanpa tahun (BCA), CSV `;` dengan baris basa-basi sebelum header (Mandiri), dan CSV tanpa
   header yang harus jatuh ke mesin parser baris. Termasuk satu kasus file sampah, untuk memastikan
   parser memberi peringatan alih-alih error.
+- **Test format BRImo + multi-file** (`tests/brimo.test.mjs`) — fixture yang meniru struktur asli
+  ekspor BRImo (19 kolom, dua kolom saldo, `DESK_TRAN` vs `REMARK_CUSTOM`). Yang dijaga di sini:
+  pemetaan nama kolom teknis, penolakan kolom saldo awal, rekonsiliasi saldo, QRIS tanpa nama
+  merchant, lokasi ATM yang tidak boleh jadi merchant, dan penggabungan multi-file — termasuk
+  bahwa baris kembar di dalam satu file tetap dipertahankan sementara duplikat lintas file dibuang.
 
-Fixture dibuat otomatis oleh integration test, jadi tidak ada file yang perlu di-commit.
+Fixture dibuat otomatis oleh test-nya, jadi tidak ada file yang perlu di-commit. Nomor rekening,
+nama, dan nominal di semua fixture adalah karangan.
 
 ### CI
 
@@ -163,10 +198,12 @@ yang diterimanya — berguna untuk memastikan model, effort, caching, dan skema 
 
 ```bash
 npm i -D playwright && npm run screenshot statement-bsi.pdf
+npm run screenshot brimo-apr.csv brimo-may.csv   # menguji tampilan multi-file
 ```
 
 Menyimpan tangkapan mode terang & gelap ke `tests/screenshots/`, sekaligus memeriksa tidak ada
-overflow horizontal.
+overflow horizontal maupun label sumbu yang terbungkus. Argumen boleh nama fixture atau path
+absolut, dan boleh lebih dari satu file.
 
 ---
 
@@ -194,6 +231,11 @@ overflow horizontal.
   semua transaksi dengan pola keterangan yang sama.
 - **Kolom saldo tidak selalu ada.** Tanpa itu, grafik saldo harian dilewati dan koreksi arah dana
   otomatis tidak bisa dipakai.
-- **Belum diuji dengan e-statement asli.** Semua pengujian memakai fixture sintetis yang meniru
-  layout tiap bank. Silakan coba dengan file aslimu; kalau ada baris yang terlewat, panel peringatan
-  akan menunjukkannya.
+- **Sudah diuji dengan e-statement asli untuk BRImo saja.** Ekspor CSV BRImo dua bulan diverifikasi
+  dengan cara yang paling ketat: seluruh baris terbaca, dan saldo awal ditambah semua mutasi tepat
+  sama dengan saldo akhir di statement. Bank lain masih diuji dengan fixture sintetis yang meniru
+  layoutnya — silakan coba dengan file aslimu, dan panel peringatan di atas dashboard akan
+  menunjukkan kalau ada baris yang terlewat.
+- **Menggabungkan rekening berbeda dihitung apa adanya.** Kalau file dari beberapa bank atau
+  beberapa rekening digabung, angkanya dijumlahkan dan sebuah peringatan ditampilkan — tapi tools
+  ini tidak tahu apakah itu memang yang kamu maksud.

@@ -44,8 +44,19 @@ function toTransactions(records: RawRecord[], bank: ParseResult["bank"]): Transa
       source: cls.source,
       note: cls.note,
       origin: r.origin,
+      noMerchantInfo: cls.noMerchantInfo,
     };
   });
+}
+
+/**
+ * Transaksi yang layak dikirim ke AI: yang belum teridentifikasi atau
+ * keyakinannya rendah, TAPI keterangannya memang memuat sesuatu untuk dianalisa.
+ */
+export function needsAiAnalysis(t: Transaction): boolean {
+  if (t.noMerchantInfo) return false;
+  if (t.source === "manual" || t.source === "ai") return false;
+  return t.source === "unknown" || t.confidence < 0.6;
 }
 
 export async function parseStatement(input: ParseInput): Promise<ParseResult> {
@@ -134,7 +145,7 @@ function finish(args: {
   const transactions = toTransactions(args.records, args.profileId);
   transactions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
-  const needsAi = transactions.filter((t) => t.source === "unknown" || t.confidence < 0.6).length;
+  const needsAi = transactions.filter(needsAiAnalysis).length;
 
   return {
     bank: args.profileId,

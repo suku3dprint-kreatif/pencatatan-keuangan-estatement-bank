@@ -3,11 +3,11 @@
 import { useCallback, useRef, useState } from "react";
 
 export function Uploader({
-  onFile,
+  onFiles,
   busy,
   status,
 }: {
-  onFile: (file: File) => void;
+  onFiles: (files: File[]) => void;
   busy: boolean;
   status?: string;
 }) {
@@ -16,10 +16,10 @@ export function Uploader({
 
   const handleFiles = useCallback(
     (files: FileList | null) => {
-      const file = files?.[0];
-      if (file) onFile(file);
+      const list = files ? Array.from(files) : [];
+      if (list.length > 0) onFiles(list);
     },
-    [onFile],
+    [onFiles],
   );
 
   return (
@@ -43,6 +43,7 @@ export function Uploader({
       <input
         ref={inputRef}
         type="file"
+        multiple
         accept=".pdf,.csv,.txt,.tsv,application/pdf,text/csv"
         className="hidden"
         onChange={(e) => handleFiles(e.target.files)}
@@ -52,8 +53,11 @@ export function Uploader({
         {busy ? (status ?? "Memproses…") : "Tarik e-statement ke sini"}
       </p>
       <p className="mt-1 text-xs text-ink-muted">
-        PDF atau CSV, maksimal 25 MB. BSI, Mandiri, BRI, BNI, BCA, Jago, SeaBank, blu, Neo — atau
-        format umum lainnya.
+        PDF atau CSV, maksimal 25 MB per file. Bisa <strong>beberapa file sekaligus</strong> —
+        misalnya statement beberapa bulan — dan semuanya digabung jadi satu analisa.
+      </p>
+      <p className="mt-1 text-xs text-ink-muted">
+        BSI, Mandiri, BRI/BRImo, BNI, BCA, Jago, SeaBank, blu, Neo — atau format umum lainnya.
       </p>
 
       <button

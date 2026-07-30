@@ -74,6 +74,9 @@ export interface Metrics {
   qrisTotal: number;
   identifiedShare: number;
   aiIdentifiedCount: number;
+  /** Transaksi yang keterangannya memang tidak memuat nama merchant. */
+  noMerchantInfoCount: number;
+  noMerchantInfoTotal: number;
   byCategory: CategoryTotal[];
   byMerchant: MerchantTotal[];
   byMonth: MonthTotal[];
@@ -213,7 +216,13 @@ export function computeMetrics(transactions: Transaction[]): Metrics {
     // Senin lebih intuitif sebagai awal minggu untuk pembaca Indonesia.
   }).sort((a, b) => ((a.weekday + 6) % 7) - ((b.weekday + 6) % 7));
 
-  const identified = sorted.filter((t) => t.source !== "unknown" && t.confidence >= 0.5).length;
+  // "Teridentifikasi" berarti merchant-nya benar-benar diketahui. Transaksi yang
+  // statement-nya tidak mencantumkan nama merchant TIDAK dihitung teridentifikasi,
+  // walau klasifikasinya sudah final — supaya angkanya jujur.
+  const identified = sorted.filter(
+    (t) => t.source !== "unknown" && t.confidence >= 0.5 && !t.noMerchantInfo,
+  ).length;
+  const noMerchant = sorted.filter((t) => t.noMerchantInfo);
   const qrisTx = sorted.filter((t) => t.kind === "qris");
 
   return {
@@ -231,6 +240,8 @@ export function computeMetrics(transactions: Transaction[]): Metrics {
     qrisTotal: qrisTx.reduce((s, t) => s + t.amount, 0),
     identifiedShare: sorted.length > 0 ? identified / sorted.length : 0,
     aiIdentifiedCount: sorted.filter((t) => t.source === "ai").length,
+    noMerchantInfoCount: noMerchant.length,
+    noMerchantInfoTotal: noMerchant.reduce((s, t) => s + t.amount, 0),
     byCategory,
     byMerchant,
     byMonth,

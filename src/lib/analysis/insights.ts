@@ -10,11 +10,17 @@ export interface Insight {
   body: string;
 }
 
+export interface InsightContext {
+  /** Jumlah transaksi yang statement-nya tidak memuat nama merchant. */
+  noMerchantInfo: number;
+  aiAvailable: boolean;
+}
+
 /**
  * Terjemahkan angka jadi temuan berbahasa manusia. Sengaja konservatif:
  * satu temuan hanya muncul kalau datanya cukup untuk mendukungnya.
  */
-export function buildInsights(m: Metrics): Insight[] {
+export function buildInsights(m: Metrics, ctx?: InsightContext): Insight[] {
   const out: Insight[] = [];
   if (m.count === 0) return out;
 
@@ -113,12 +119,31 @@ export function buildInsights(m: Metrics): Insight[] {
     });
   }
 
+  // ── Batasan data dari banknya sendiri ─────────────────────────────────────
+  // Ini temuan yang penting justru karena bukan soal tools-nya: kalau statement
+  // tidak mencantumkan nama merchant, tidak ada cara menebaknya dari data itu.
+  const noInfo = ctx?.noMerchantInfo ?? m.noMerchantInfoCount;
+  if (noInfo > 0 && m.count > 0) {
+    out.push({
+      tone: noInfo / m.count > 0.4 ? "warning" : "neutral",
+      title: `${noInfo} transaksi tanpa nama merchant di statement`,
+      body: `Senilai ${rupiah(m.noMerchantInfoTotal)} (${persen(noInfo / m.count)} dari jumlah transaksi). Keterangannya hanya berisi kode transaksi dan merchant PAN — ini batasan ekspor banknya, bukan kegagalan analisa. Untuk melacaknya, cocokkan tanggal dan nominalnya dengan riwayat di aplikasi mobile banking.`,
+    });
+  }
+
   // ── Kualitas identifikasi ─────────────────────────────────────────────────
-  if (m.identifiedShare < 0.75) {
+  // Hanya ditampilkan kalau memang masih ada yang bisa diperbaiki: transaksi
+  // tanpa nama merchant tidak akan membaik walau AI dinyalakan.
+  const fixable = m.count - noInfo;
+  const identifiedOfFixable = fixable > 0 ? (m.identifiedShare * m.count) / fixable : 1;
+  if (fixable > 0 && identifiedOfFixable < 0.75) {
     out.push({
       tone: "warning",
-      title: `${persen(1 - m.identifiedShare)} transaksi masih belum jelas`,
-      body: "Nyalakan AI analyzer atau perbaiki kategorinya manual di tabel di bawah supaya analisisnya lebih akurat.",
+      title: `${persen(1 - identifiedOfFixable)} dari transaksi yang bisa dikenali masih belum jelas`,
+      body:
+        ctx && !ctx.aiAvailable
+          ? "AI analyzer belum aktif. Isi ANTHROPIC_API_KEY di .env.local, atau perbaiki kategorinya manual di tabel di bawah."
+          : "Perbaiki kategorinya manual di tabel di bawah — koreksinya otomatis berlaku untuk semua transaksi dengan pola keterangan yang sama.",
     });
   }
 

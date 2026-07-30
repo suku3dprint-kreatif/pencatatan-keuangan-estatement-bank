@@ -4,26 +4,59 @@ import type { ExtractedLine, RawRecord } from "./engine";
 import { findDate, findPeriod, parseAmount, resolveYear } from "./primitives";
 import { reconcileWithBalance } from "./engine";
 
-/** Nama kolom yang dikenali, dari berbagai bank & hasil ekspor spreadsheet. */
+/**
+ * Nama kolom yang dikenali, dari berbagai bank & hasil ekspor spreadsheet.
+ *
+ * `remark` sengaja dipisah dari `description`: ekspor BRImo punya DESK_TRAN
+ * (kode teknis) dan REMARK_CUSTOM (keterangan versi manusia, mis. "Pembayaran
+ * QRIS FAMILYMART CONTOH RAYA"). Yang kedua jauh lebih berguna untuk
+ * mengenali merchant, jadi keduanya diambil dan digabung.
+ */
 const ALIASES = {
   date: [
-    "tanggal", "tgl", "date", "tanggal transaksi", "transaction date", "posting date",
-    "tanggal posting", "value date", "tanggal valuta", "waktu", "datetime", "trx date",
-    "tanggal mutasi",
+    "tanggal", "tgl", "date", "tanggal transaksi", "tgl transaksi", "tgl tran",
+    "transaction date", "posting date", "tanggal posting", "value date",
+    "tanggal valuta", "waktu", "datetime", "trx date", "tanggal mutasi",
   ],
+  debit: [
+    "debit", "debet", "keluar", "pengeluaran", "uang keluar", "withdrawal", "dr",
+    "out", "kas keluar", "mutasi debet", "mutasi debit",
+  ],
+  credit: [
+    "kredit", "credit", "masuk", "pemasukan", "uang masuk", "deposit", "cr", "in",
+    "kas masuk", "mutasi kredit", "mutasi credit",
+  ],
+  balance: [
+    "saldo", "balance", "saldo akhir", "saldo akhir mutasi", "running balance",
+    "ending balance", "sisa saldo",
+  ],
+  remark: ["remark", "remarks", "remark custom", "keterangan tambahan", "catatan", "berita"],
   description: [
-    "keterangan", "deskripsi", "description", "uraian", "remark", "remarks", "berita",
-    "catatan", "detail", "transaction detail", "narasi", "keterangan transaksi", "note",
-    "nama transaksi", "transaction", "transaksi",
+    "keterangan", "deskripsi", "description", "desk", "desk tran", "uraian",
+    "detail", "transaction detail", "narasi", "keterangan transaksi",
+    "deskripsi transaksi", "nama transaksi", "transaction", "transaksi", "note",
   ],
-  debit: ["debit", "debet", "keluar", "pengeluaran", "uang keluar", "withdrawal", "dr", "out", "kas keluar"],
-  credit: ["kredit", "credit", "masuk", "pemasukan", "uang masuk", "deposit", "cr", "in", "kas masuk"],
+  type: ["tipe", "type", "jenis", "d/k", "dk", "dc", "arah", "direction", "debit/kredit", "cr/db", "glsign", "gl sign"],
   amount: ["nominal", "jumlah", "amount", "mutasi", "nilai", "value", "total", "amount idr"],
-  balance: ["saldo", "balance", "saldo akhir", "running balance", "ending balance", "sisa saldo"],
-  type: ["tipe", "type", "jenis", "d/k", "dk", "dc", "arah", "direction", "debit/kredit", "cr/db"],
 } as const;
 
+/**
+ * Urutan prioritas saat satu nama kolom cocok ke beberapa field dengan skor
+ * sama. `amount` ditaruh paling akhir supaya "MUTASI_DEBET" jadi kolom debet
+ * (bukan kolom nominal generik), dan "SALDO_AKHIR_MUTASI" jadi kolom saldo.
+ */
+const FIELD_PRIORITY = [
+  "date", "debit", "credit", "balance", "remark", "description", "type", "amount",
+] as const;
+
 type Field = keyof typeof ALIASES;
+
+/**
+ * Kolom yang harus diabaikan sama sekali. "SALDO_AWAL_MUTASI" adalah saldo
+ * SEBELUM transaksi — kalau ini yang terambil sebagai kolom saldo, rekonsiliasi
+ * arah dana dan grafik saldo jadi bergeser satu baris.
+ */
+const REJECT_TOKENS = new Set(["awal", "opening", "sebelum", "previous", "beginning"]);
 
 function normalizeHeader(h: string): string {
   return h
@@ -33,17 +66,34 @@ function normalizeHeader(h: string): string {
     .trim();
 }
 
-function matchField(header: string): Field | null {
+/**
+ * Cocokkan satu nama kolom ke field. Tiga tingkat kecocokan, dari yang paling
+ * meyakinkan: seluruh nama sama persis, satu kata utuh sama persis, lalu
+ * substring. Pencocokan per kata inilah yang membuat "TGL_TRAN" terbaca sebagai
+ * kolom tanggal — dulu gagal karena "tgl" terlalu pendek untuk dicocokkan
+ * sebagai substring.
+ */
+export function matchField(header: string): Field | null {
   const h = normalizeHeader(header);
   if (!h) return null;
-  // Cocokkan persis dulu supaya "saldo" tidak keburu diklaim oleh "jumlah".
-  for (const [field, names] of Object.entries(ALIASES) as [Field, readonly string[]][]) {
-    if (names.includes(h)) return field;
+
+  const tokens = h.split(" ");
+  if (tokens.some((t) => REJECT_TOKENS.has(t))) return null;
+
+  let best: { field: Field; score: number } | null = null;
+  for (const field of FIELD_PRIORITY) {
+    const names = ALIASES[field] as readonly string[];
+    let score = 0;
+    if (names.includes(h)) score = 3;
+    else if (tokens.some((t) => names.includes(t))) score = 2;
+    else if (names.some((n) => n.length >= 5 && h.includes(n))) score = 1;
+
+    // Skor sama → field yang lebih dulu di FIELD_PRIORITY menang.
+    if (score > 0 && (best === null || score > best.score)) {
+      best = { field, score };
+    }
   }
-  for (const [field, names] of Object.entries(ALIASES) as [Field, readonly string[]][]) {
-    if (names.some((n) => n.length >= 4 && h.includes(n))) return field;
-  }
-  return null;
+  return best?.field ?? null;
 }
 
 interface HeaderMap {
@@ -63,6 +113,8 @@ function findHeaderRow(rows: string[][]): HeaderMap | null {
     const fields: Partial<Record<Field, number>> = {};
     rows[i].forEach((cell, col) => {
       const field = matchField(cell);
+      // Kolom pertama yang cocok yang dipakai: di ekspor BRImo, TGL_TRAN datang
+      // sebelum TGL_EFEKTIF, dan yang pertama itulah tanggal transaksinya.
       if (field && fields[field] === undefined) fields[field] = col;
     });
     const hasDate = fields.date !== undefined;
@@ -82,13 +134,29 @@ function cellAmount(row: string[], col: number | undefined): number | null {
   return parseAmount(raw);
 }
 
-export interface CsvParseResult {
-  records: RawRecord[];
-  warnings: ParseWarning[];
-  periodStart?: string;
-  periodEnd?: string;
-  /** Kalau header tidak ketemu, teks mentah diserahkan ke mesin baris. */
-  fallbackLines?: ExtractedLine[];
+/** Hanya huruf, untuk membandingkan "isi informasi" dua keterangan. */
+function letters(s: string): string {
+  return s.toUpperCase().replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Gabungkan keterangan teknis dan keterangan versi manusia.
+ *
+ * Di ekspor BRImo, REMARK_CUSTOM kadang berisi nama merchant yang tidak ada di
+ * DESK_TRAN ("Pembayaran QRIS FAMILYMART CONTOH RAYA"), tapi seringkali cuma
+ * mengulang kode yang sama. Kalau memang mengulang, jangan digandakan.
+ * Kalau berbeda, keduanya dipakai: nama merchant untuk klasifikasi, kode teknis
+ * supaya NMID/MPAN tetap bisa diekstrak.
+ */
+export function mergeDescription(desc: string, remark: string): string {
+  const d = desc.trim();
+  const r = remark.trim();
+  if (!r) return d;
+  if (!d) return r;
+  const dl = letters(d);
+  const rl = letters(r);
+  if (!rl || rl === dl || dl.includes(rl)) return d;
+  return `${r} · ${d}`;
 }
 
 /**
@@ -123,6 +191,15 @@ export function detectDelimiter(text: string): string {
     if (score > best.score) best = { delimiter, score };
   }
   return best.delimiter;
+}
+
+export interface CsvParseResult {
+  records: RawRecord[];
+  warnings: ParseWarning[];
+  periodStart?: string;
+  periodEnd?: string;
+  /** Kalau header tidak ketemu, teks mentah diserahkan ke mesin baris. */
+  fallbackLines?: ExtractedLine[];
 }
 
 export function parseCsv(text: string): CsvParseResult {
@@ -172,8 +249,9 @@ export function parseCsv(text: string): CsvParseResult {
       continue;
     }
 
-    const description =
-      (fields.description !== undefined ? row[fields.description] : "")?.trim() || "(tanpa keterangan)";
+    const desc = fields.description !== undefined ? (row[fields.description] ?? "") : "";
+    const remark = fields.remark !== undefined ? (row[fields.remark] ?? "") : "";
+    const description = mergeDescription(desc, remark) || "(tanpa keterangan)";
 
     const debit = cellAmount(row, fields.debit);
     const credit = cellAmount(row, fields.credit);

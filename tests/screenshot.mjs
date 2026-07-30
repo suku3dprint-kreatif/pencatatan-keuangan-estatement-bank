@@ -13,7 +13,14 @@ const outDir = join(here, "screenshots");
 mkdirSync(outDir, { recursive: true });
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3111";
-const fixture = join(here, "fixtures", process.argv[2] ?? "statement-bsi.pdf");
+
+// Argumen boleh nama fixture atau path absolut, dan boleh lebih dari satu
+// (untuk menguji penggabungan multi-file).
+const args = process.argv.slice(2);
+const files = (args.length > 0 ? args : ["statement-bsi.pdf"]).map((a) =>
+  a.startsWith("/") ? a : join(here, "fixtures", a),
+);
+const label = process.env.LABEL ?? "dashboard";
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROME_PATH ?? "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -34,11 +41,11 @@ for (const theme of ["light", "dark"]) {
   page.on("pageerror", (e) => errors.push(String(e)));
 
   await page.goto(BASE, { waitUntil: "networkidle" });
-  await page.setInputFiles('input[type="file"]', fixture);
-  await page.waitForSelector("text=Arus kas per bulan", { timeout: 60000 });
-  await page.waitForTimeout(1500);
+  await page.setInputFiles('input[type="file"]', files);
+  await page.waitForSelector("text=Arus kas per bulan", { timeout: 120000 });
+  await page.waitForTimeout(2000);
 
-  await page.screenshot({ path: join(outDir, `dashboard-${theme}.png`), fullPage: true });
+  await page.screenshot({ path: join(outDir, `${label}-${theme}.png`), fullPage: true });
   console.log(`${theme}: screenshot tersimpan`);
   if (errors.length) console.log(`${theme}: console errors →`, errors.slice(0, 5));
 

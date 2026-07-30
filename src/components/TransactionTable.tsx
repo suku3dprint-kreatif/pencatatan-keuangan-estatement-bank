@@ -25,13 +25,22 @@ export function TransactionTable({
   const [category, setCategory] = useState("all");
   const [direction, setDirection] = useState<"all" | "debit" | "credit">("all");
   const [onlyUnclear, setOnlyUnclear] = useState(false);
+  const [sourceFile, setSourceFile] = useState("all");
   const [limit, setLimit] = useState(50);
+
+  // Filter per file hanya muncul kalau memang ada beberapa file yang digabung.
+  const sourceFiles = useMemo(() => {
+    const names = new Set<string>();
+    for (const t of transactions) if (t.sourceFile) names.add(t.sourceFile);
+    return [...names].sort();
+  }, [transactions]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return transactions.filter((t) => {
       if (category !== "all" && t.category !== category) return false;
       if (direction !== "all" && t.direction !== direction) return false;
+      if (sourceFile !== "all" && t.sourceFile !== sourceFile) return false;
       if (onlyUnclear && t.confidence >= 0.6 && t.source !== "unknown") return false;
       if (!q) return true;
       return (
@@ -40,13 +49,14 @@ export function TransactionTable({
         getCategory(t.category).label.toLowerCase().includes(q)
       );
     });
-  }, [transactions, query, category, direction, onlyUnclear]);
+  }, [transactions, query, category, direction, onlyUnclear, sourceFile]);
 
   const visible = filtered.slice(0, limit);
 
   function exportCsv() {
     const header = [
-      "tanggal", "keterangan", "merchant", "kategori", "arah", "nominal", "saldo", "sumber", "keyakinan",
+      "tanggal", "keterangan", "merchant", "kategori", "arah", "nominal", "saldo", "sumber",
+      "keyakinan", "file",
     ];
     const rows = filtered.map((t) => [
       t.date,
@@ -58,6 +68,7 @@ export function TransactionTable({
       t.balance !== undefined ? String(Math.round(t.balance)) : "",
       SOURCE_LABEL[t.source],
       t.confidence.toFixed(2),
+      t.sourceFile ?? "",
     ]);
     const csv = [header, ...rows]
       .map((r) => r.map((c) => `"${c}"`).join(","))
@@ -103,6 +114,21 @@ export function TransactionTable({
           <option value="debit">Keluar</option>
           <option value="credit">Masuk</option>
         </select>
+        {sourceFiles.length > 1 ? (
+          <select
+            value={sourceFile}
+            onChange={(e) => setSourceFile(e.target.value)}
+            aria-label="Filter berdasarkan file asal"
+            className="max-w-[180px] rounded-lg border border-hairline bg-surface px-2.5 py-1.5 text-xs text-ink outline-none focus:border-[color:var(--series-1)]"
+          >
+            <option value="all">Semua file</option>
+            {sourceFiles.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <label className="flex items-center gap-1.5 text-xs text-ink-2">
           <input
             type="checkbox"
@@ -141,12 +167,22 @@ export function TransactionTable({
           <tbody>
             {visible.map((t) => (
               <tr key={t.id} className="border-b border-hairline last:border-0 align-top">
-                <td className="tabular whitespace-nowrap px-3 py-2 text-ink-2">{tanggal(t.date)}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-ink-2">
+                  <span className="tabular">{tanggal(t.date)}</span>
+                  {sourceFiles.length > 1 && t.sourceFile ? (
+                    <span
+                      className="mt-0.5 block max-w-[120px] truncate text-[10px] text-ink-muted"
+                      title={t.sourceFile}
+                    >
+                      {t.sourceFile}
+                    </span>
+                  ) : null}
+                </td>
                 <td className="px-3 py-2">
                   <span className="font-medium text-ink">{t.merchant ?? "—"}</span>
-                  {t.qris?.nmid ? (
+                  {t.qris?.nmid || t.qris?.mpan ? (
                     <span className="tabular mt-0.5 block text-[10px] text-ink-muted">
-                      {t.qris.nmid}
+                      {t.qris.nmid ?? t.qris.mpan}
                     </span>
                   ) : null}
                 </td>

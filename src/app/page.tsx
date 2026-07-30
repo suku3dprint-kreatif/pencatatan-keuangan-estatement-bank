@@ -7,8 +7,7 @@ import { Dashboard } from "@/components/Dashboard";
 import { Card, CardHeader } from "@/components/ui";
 import { angka } from "@/lib/format";
 import { dedupKey } from "@/lib/ai/dedup";
-
-type ParseResponse = ParseResult & { aiAvailable: boolean };
+import { mergeStatements, type MergedStatement } from "@/lib/analysis/merge";
 
 /** Koreksi kategori manual disimpan per pola keterangan, bukan per id transaksi,
  *  supaya perbaikan sekali langsung berlaku untuk merchant yang sama di file lain. */
@@ -32,8 +31,19 @@ function saveOverrides(map: Record<string, string>) {
   }
 }
 
+/**
+ * Transaksi yang layak dikirim ke AI. Sengaja tidak memakai helper dari
+ * lib/parse supaya modul itu (yang menarik pdfjs) tidak masuk bundle browser.
+ */
+function shouldEnrich(t: Transaction): boolean {
+  if (t.noMerchantInfo) return false;
+  if (t.source === "manual" || t.source === "ai") return false;
+  return t.source === "unknown" || t.confidence < 0.6;
+}
+
 export default function Home() {
-  const [parse, setParse] = useState<ParseResponse | null>(null);
+  const [merged, setMerged] = useState<MergedStatement | null>(null);
+  const [aiAvailable, setAiAvailable] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -50,7 +60,6 @@ export default function Home() {
     setOverrides(loadOverrides());
   }, []);
 
-  /** Terapkan koreksi manual yang tersimpan ke daftar transaksi. */
   const applyOverrides = useCallback(
     (list: Transaction[], map: Record<string, string>): Transaction[] =>
       list.map((t) => {
@@ -62,101 +71,130 @@ export default function Home() {
     [],
   );
 
-  const runEnrich = useCallback(
-    async (list: Transaction[]) => {
-      const pending = list.filter(
-        (t) => t.source === "unknown" || (t.source !== "manual" && t.confidence < 0.6),
-      );
-      if (pending.length === 0) {
-        setAiState({ running: false, done: true, updated: 0, errors: [] });
-        return list;
-      }
+  const runEnrich = useCallback(async (list: Transaction[]) => {
+    const pending = list.filter(shouldEnrich);
+    if (pending.length === 0) {
+      setAiState({ running: false, done: true, updated: 0, errors: [] });
+      return list;
+    }
 
-      setAiState({ running: true, done: false, updated: 0, errors: [] });
-      setStatus(`AI menganalisa ${pending.length} transaksi…`);
+    setAiState({ running: true, done: false, updated: 0, errors: [] });
+    setStatus(`AI menganalisa ${pending.length} transaksi…`);
 
-      const items: EnrichItem[] = pending.map((t) => ({
-        id: t.id,
-        description: t.description,
-        amount: t.amount,
-        date: t.date,
-        direction: t.direction,
-        qris: t.qris,
-      }));
+    const items: EnrichItem[] = pending.map((t) => ({
+      id: t.id,
+      description: t.description,
+      amount: t.amount,
+      date: t.date,
+      direction: t.direction,
+      qris: t.qris,
+    }));
 
-      // Dipecah supaya request tidak pernah kelewat besar/lama.
-      const CHUNK = 300;
-      const results: EnrichResult[] = [];
-      const errors: string[] = [];
+    // Dipecah supaya request tidak pernah kelewat besar/lama.
+    const CHUNK = 300;
+    const results: EnrichResult[] = [];
+    const errors: string[] = [];
 
-      for (let i = 0; i < items.length; i += CHUNK) {
-        const slice = items.slice(i, i + CHUNK);
-        try {
-          const res = await fetch("/api/enrich", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items: slice }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            errors.push(data.error ?? `HTTP ${res.status}`);
-            continue;
-          }
-          results.push(...(data.results as EnrichResult[]));
-          if (Array.isArray(data.errors)) errors.push(...(data.errors as string[]));
-        } catch (e) {
-          errors.push(e instanceof Error ? e.message : String(e));
+    for (let i = 0; i < items.length; i += CHUNK) {
+      const slice = items.slice(i, i + CHUNK);
+      try {
+        const res = await fetch("/api/enrich", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: slice }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errors.push(data.error ?? `HTTP ${res.status}`);
+          continue;
         }
+        results.push(...(data.results as EnrichResult[]));
+        if (Array.isArray(data.errors)) errors.push(...(data.errors as string[]));
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message : String(e));
       }
+    }
 
-      const byId = new Map(results.map((r) => [r.id, r]));
-      const updated = list.map((t) => {
-        const hit = byId.get(t.id);
-        if (!hit || t.source === "manual") return t;
-        return {
-          ...t,
-          merchant: hit.merchant,
-          category: hit.category,
-          confidence: hit.confidence,
-          source: "ai" as const,
-          note: hit.note,
-        };
-      });
+    const byId = new Map(results.map((r) => [r.id, r]));
+    const updated = list.map((t) => {
+      const hit = byId.get(t.id);
+      if (!hit || t.source === "manual") return t;
+      return {
+        ...t,
+        merchant: hit.merchant,
+        category: hit.category,
+        confidence: hit.confidence,
+        source: "ai" as const,
+        note: hit.note,
+      };
+    });
 
-      setAiState({ running: false, done: true, updated: results.length, errors });
-      setStatus(undefined);
-      return updated;
-    },
-    [],
-  );
+    setAiState({ running: false, done: true, updated: results.length, errors });
+    setStatus(undefined);
+    return updated;
+  }, []);
 
-  const handleFile = useCallback(
-    async (file: File) => {
+  const handleFiles = useCallback(
+    async (files: File[]) => {
       setBusy(true);
       setError(undefined);
-      setStatus("Membaca file…");
-      setParse(null);
+      setMerged(null);
       setTransactions([]);
       setAiState({ running: false, done: false, updated: 0, errors: [] });
 
       try {
-        const form = new FormData();
-        form.append("file", file);
-        const res = await fetch("/api/parse", { method: "POST", body: form });
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.error ?? `Gagal memproses file (HTTP ${res.status}).`);
+        const results: ParseResult[] = [];
+        const failures: string[] = [];
+        let anyAiAvailable = false;
+
+        // Diproses satu per satu supaya progresnya kelihatan dan satu file yang
+        // gagal tidak menggagalkan yang lain.
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          setStatus(
+            files.length > 1
+              ? `Membaca file ${i + 1} dari ${files.length}: ${file.name}…`
+              : "Membaca file…",
+          );
+          try {
+            const form = new FormData();
+            form.append("file", file);
+            const res = await fetch("/api/parse", { method: "POST", body: form });
+            const data = await res.json();
+            if (!res.ok) {
+              failures.push(`${file.name}: ${data.error ?? `HTTP ${res.status}`}`);
+              continue;
+            }
+            const parsed = data as ParseResult & { aiAvailable: boolean };
+            anyAiAvailable = anyAiAvailable || parsed.aiAvailable;
+            results.push(parsed);
+          } catch (e) {
+            failures.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+
+        if (results.length === 0) {
+          setError(
+            failures.length > 0
+              ? failures.join(" · ")
+              : "Tidak ada file yang berhasil dibaca.",
+          );
           return;
         }
 
-        const result = data as ParseResponse;
+        const combined = mergeStatements(results);
+        for (const f of failures) {
+          combined.warnings.push({ level: "warn", message: f });
+        }
+
         const current = loadOverrides();
         setOverrides(current);
-        let list = applyOverrides(result.transactions, current);
-        setParse(result);
+        let list = applyOverrides(combined.transactions, current);
+        setMerged(combined);
+        setAiAvailable(anyAiAvailable);
         setTransactions(list);
 
-        if (result.aiAvailable) {
+        if (anyAiAvailable) {
           list = await runEnrich(list);
           setTransactions(applyOverrides(list, current));
         } else {
@@ -209,17 +247,19 @@ export default function Home() {
   );
 
   const reset = useCallback(() => {
-    setParse(null);
+    setMerged(null);
     setTransactions([]);
     setError(undefined);
     setAiState({ running: false, done: false, updated: 0, errors: [] });
   }, []);
 
   const aiPanel = useMemo(() => {
-    if (!parse) return null;
+    if (!merged) return null;
     if (!aiState.running && !aiState.done) return null;
 
     const hasErrors = aiState.errors.length > 0;
+    const skipped = merged.noMerchantInfo;
+
     return (
       <Card>
         <CardHeader
@@ -238,6 +278,16 @@ export default function Home() {
             />
           </div>
         ) : null}
+
+        {!aiState.running && skipped > 0 ? (
+          <p className="text-xs leading-relaxed text-ink-2">
+            <strong>{angka(skipped)} transaksi QRIS</strong> tidak dikirim ke AI karena
+            keterangannya di statement memang hanya berisi kode transaksi dan merchant PAN —
+            tidak ada nama merchant sama sekali, jadi tidak ada yang bisa ditebak. Ini batasan
+            ekspor dari banknya, bukan hasil analisa yang gagal.
+          </p>
+        ) : null}
+
         {hasErrors ? (
           <ul className="mt-2 space-y-1">
             {aiState.errors.map((e, i) => (
@@ -250,7 +300,8 @@ export default function Home() {
             ))}
           </ul>
         ) : null}
-        {!aiState.running && !hasErrors && aiState.updated === 0 ? (
+
+        {!aiState.running && !hasErrors && aiState.updated === 0 && skipped === 0 ? (
           <p className="text-xs text-ink-muted">
             Semua transaksi sudah bisa dikenali tanpa AI — kamus merchant dan aturan rule-based
             sudah cukup.
@@ -258,22 +309,22 @@ export default function Home() {
         ) : null}
       </Card>
     );
-  }, [parse, aiState]);
+  }, [merged, aiState]);
 
   return (
     <main className="mx-auto max-w-[1400px] px-4 py-8 md:px-6">
-      {!parse ? (
+      {!merged ? (
         <div className="mx-auto max-w-2xl">
           <header className="mb-6 text-center">
             <h1 className="text-xl font-semibold text-ink">Analisa E-Statement Bank</h1>
             <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-ink-2">
-              Upload e-statement PDF atau CSV. Kode QRIS yang cuma berisi angka panjang akan
-              ditebak merchant dan kategorinya, lalu semuanya dijadikan visualisasi dan analisa
-              detail.
+              Upload e-statement PDF atau CSV — satu file atau beberapa bulan sekaligus. Kode QRIS
+              yang cuma berisi angka panjang akan ditebak merchant dan kategorinya, lalu semuanya
+              dijadikan visualisasi dan analisa detail.
             </p>
           </header>
 
-          <Uploader onFile={handleFile} busy={busy} status={status} />
+          <Uploader onFiles={handleFiles} busy={busy} status={status} />
 
           {error ? (
             <div
@@ -294,12 +345,12 @@ export default function Home() {
                 body: "Parser tahu layout kolom debit/kredit per bank, dan mengoreksi arah dana dari selisih saldo berjalan.",
               },
               {
-                title: "Tebak merchant QRIS",
-                body: "Kamus merchant Indonesia dulu (gratis), sisanya baru diserahkan ke Claude — hemat dan cepat.",
+                title: "Gabung beberapa bulan",
+                body: "Upload beberapa file sekaligus. Periode yang tumpang tindih dideteksi dan transaksi gandanya dibuang.",
               },
               {
-                title: "Analisa mendetail",
-                body: "Arus kas, kategori, langganan berulang, anomali, laju pengeluaran, sampai pola per hari.",
+                title: "Tebak merchant QRIS",
+                body: "Kamus merchant Indonesia dulu (gratis), sisanya baru diserahkan ke Claude — hemat dan cepat.",
               },
             ].map((f) => (
               <div key={f.title} className="rounded-xl border border-hairline bg-surface p-4">
@@ -311,11 +362,12 @@ export default function Home() {
         </div>
       ) : (
         <Dashboard
-          parse={parse}
+          merged={merged}
           transactions={transactions}
           onCategoryChange={handleCategoryChange}
           onReset={reset}
           aiPanel={aiPanel}
+          aiAvailable={aiAvailable}
         />
       )}
     </main>

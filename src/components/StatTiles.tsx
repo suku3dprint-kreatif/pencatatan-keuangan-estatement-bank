@@ -32,7 +32,13 @@ export function StatTiles({ metrics }: { metrics: Metrics }) {
     {
       label: "Selisih",
       value: rupiah(metrics.net),
-      sub: metrics.income > 0 ? `tingkat menabung ${persen(metrics.savingsRate)}` : undefined,
+      // "Tingkat menabung -42%" membingungkan; kalau minus, sebut apa adanya.
+      sub:
+        metrics.income <= 0
+          ? undefined
+          : metrics.net >= 0
+            ? `tingkat menabung ${persen(metrics.savingsRate)}`
+            : `pengeluaran ${persen(metrics.expense / metrics.income)} dari pemasukan`,
       accent: metrics.net >= 0 ? "var(--status-good)" : "var(--status-critical)",
       marker: metrics.net >= 0 ? "✓" : "!",
     },

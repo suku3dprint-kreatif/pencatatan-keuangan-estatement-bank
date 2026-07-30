@@ -11,6 +11,9 @@ export function normalize(text: string): string {
 
 const QRIS_MARKERS = [
   /\bQRIS\b/,
+  // BRImo menempelkan kode langsung ke prefiksnya: "QRISRNS119003178520",
+  // "QRIS119026531635" — tanpa spasi, jadi \bQRIS\b tidak pernah cocok.
+  /\bQRIS[A-Z]{0,4}\d{6,}/,
   /\bQR\s?PAY(?:MENT)?\b/,
   /\bQRC\b/,
   /\bQR\s?-\s?\d/,
@@ -19,7 +22,16 @@ const QRIS_MARKERS = [
   /\bQR\s?CODE\b/,
   /\bNMID\b/,
   /\bMERCHANT\s?(?:ID|PAY)\b/,
+  // Merchant PAN QRIS Indonesia selalu berawalan 936 dan panjang 15–19 digit.
+  // Kehadirannya sendiri sudah menandakan transaksi QRIS, walau kata "QRIS"
+  // tidak tertulis (BRImo memakai kode transaksi seperti "456042#..." ).
+  MPAN_PATTERN(),
 ];
+
+/** Merchant PAN QRIS: 936 + 12–16 digit. */
+function MPAN_PATTERN(): RegExp {
+  return /\b936\d{12,16}\b/;
+}
 
 /** Acquirer / penyelenggara yang sering muncul di keterangan QRIS. */
 const ACQUIRERS = [
@@ -54,6 +66,10 @@ const NOISE_TOKENS = new Set([
   "INDONESIA", "ID", "JAKARTA", "TANGERANG", "BEKASI", "DEPOK", "BOGOR",
   "BANDUNG", "SURABAYA", "SEMARANG", "YOGYAKARTA", "MEDAN", "MAKASSAR",
   "KOTA", "KAB", "KABUPATEN", "PUSAT", "SELATAN", "UTARA", "TIMUR", "BARAT",
+  // Token teknis kanal BRImo. Tanpa ini, keterangan QRIS yang isinya cuma kode
+  // menyisakan "ESB NBMB" dan terlihat seolah ada nama merchant.
+  "ESB", "NBMB", "NBMBA", "BAPE", "EJLN", "ATM0", "ATM1", "BRIVA", "BFST",
+  "QRISRNS", "RNS", "PRA", "VIA", "BRIMO", "BRI", "CABANG", "CAB", "UNIT",
 ]);
 
 export function isQris(description: string): boolean {
@@ -68,6 +84,9 @@ export function extractQrisMeta(description: string): QrisMeta {
 
   const nmid = /\bID\s?(\d{13,15})\b/.exec(n);
   if (nmid) meta.nmid = `ID${nmid[1]}`;
+
+  const mpan = MPAN_PATTERN().exec(n);
+  if (mpan) meta.mpan = mpan[0];
 
   const tid = /\b(?:TID|TERMINAL)\s?:?\s?([A-Z0-9]{6,})\b/.exec(n);
   if (tid) meta.terminalId = tid[1];
@@ -106,10 +125,18 @@ const KIND_RULES: { re: RegExp; kind: TxKind; direction?: Direction }[] = [
   { re: /\bTOP\s?UP\b|\bTOPUP\b|\bISI\s?SALDO\b/, kind: "topup" },
   { re: /\bGAJI\b|\bPAYROLL\b|\bSALARY\b|\bTHR\b/, kind: "payroll", direction: "credit" },
   { re: /\bBAGI\s?HASIL\b|\bBUNGA\b|\bINTEREST\b|\bNISBAH\b/, kind: "interest", direction: "credit" },
-  { re: /\bBIAYA\s?ADM|\bADMIN\s?FEE\b|\bBIAYA\s?TRANSFER\b|\bFEE\b|\bPAJAK\b|\bTAX\b|\bDENDA\b|\bMATERAI\b/, kind: "fee" },
-  { re: /\bPEMBAYARAN\s?TAGIHAN\b|\bBILL\s?PAYMENT\b|\bTAGIHAN\b|\bVA\s?\d|\bVIRTUAL\s?ACCOUNT\b/, kind: "bill" },
+  // "BIAYA" polos ikut dihitung: BRImo memakai "BIAYA Request Kartu",
+  // "Admin Fee", dan "Monthly Fee ATM".
+  { re: /\bBIAYA\b|\bADMIN\s?FEE\b|\bFEE\b|\bPAJAK\b|\bTAX\b|\bDENDA\b|\bMATERAI\b/, kind: "fee" },
+  // BRIVA = virtual account BRI; PLN-PRA = token listrik prabayar.
+  { re: /\bPEMBAYARAN\s?TAGIHAN\b|\bBILL\s?PAYMENT\b|\bTAGIHAN\b|\bVA\s?\d|\bVIRTUAL\s?ACCOUNT\b|\bBRIVA\b|\bPLN-?PRA\b/, kind: "bill" },
   { re: /\bKARTU\s?KREDIT\b|\bCREDIT\s?CARD\b|\bDEBIT\s?CARD\b|\bEDC\b/, kind: "card" },
-  { re: /\bTRSF\b|\bTRANSFER\b|\bTRF\b|\bBIFAST\b|\bBI\s?FAST\b|\bRTGS\b|\bSKN\b|\bLLG\b|\bKIRIM(?:AN)?\s?UANG\b/, kind: "transfer_out" },
+  // BFST = BI-Fast di BRImo. Tanda hubung ikut ditoleransi karena normalisasi
+  // mempertahankannya ("BI-FAST").
+  {
+    re: /\bTRSF\b|\bTRANSFER\b|\bTRF\b|\bBFST\b|\bBI[\s-]?FAST\b|\bBIFAST\b|\bRTGS\b|\bSKN\b|\bLLG\b|\bKIRIM(?:AN)?\s?UANG\b/,
+    kind: "transfer_out",
+  },
 ];
 
 /** Tentukan jenis transaksi dari keterangan + arah dana. */

@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import type { ParseResult, Transaction } from "@/lib/types";
+import type { Transaction } from "@/lib/types";
+import type { MergedStatement } from "@/lib/analysis/merge";
 import { computeMetrics } from "@/lib/analysis/metrics";
 import { buildInsights } from "@/lib/analysis/insights";
 import { angka, periode, persen, rupiah } from "@/lib/format";
@@ -16,20 +17,27 @@ import { AnomalyPanel, InsightList, RecurringPanel } from "@/components/Panels";
 import { TransactionTable } from "@/components/TransactionTable";
 
 export function Dashboard({
-  parse,
+  merged,
   transactions,
   onCategoryChange,
   onReset,
   aiPanel,
+  aiAvailable,
 }: {
-  parse: ParseResult;
+  merged: MergedStatement;
   transactions: Transaction[];
   onCategoryChange: (id: string, categoryId: string) => void;
   onReset: () => void;
   aiPanel: React.ReactNode;
+  aiAvailable: boolean;
 }) {
   const metrics = useMemo(() => computeMetrics(transactions), [transactions]);
-  const insights = useMemo(() => buildInsights(metrics), [metrics]);
+  const insights = useMemo(
+    () => buildInsights(metrics, { noMerchantInfo: merged.noMerchantInfo, aiAvailable }),
+    [metrics, merged.noMerchantInfo, aiAvailable],
+  );
+
+  const multiFile = merged.files.length > 1;
 
   return (
     <div className="space-y-4">
@@ -38,20 +46,21 @@ export function Dashboard({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-base font-semibold text-ink">{parse.bankLabel}</h1>
-              {parse.bankConfidence < 0.5 ? (
-                <Badge tone="warning">! bank ditebak, cek hasilnya</Badge>
-              ) : (
-                <Badge tone="good">✓ terdeteksi otomatis</Badge>
-              )}
+              <h1 className="text-base font-semibold text-ink">{merged.bankLabel}</h1>
+              {multiFile ? (
+                <Badge>
+                  {angka(merged.files.length)} file digabung
+                </Badge>
+              ) : null}
             </div>
             <p className="mt-1 text-xs text-ink-muted">
-              {parse.meta.fileName} · {parse.meta.fileType.toUpperCase()}
-              {parse.meta.pages ? ` · ${parse.meta.pages} halaman` : ""} ·{" "}
-              {angka(parse.meta.rows)} transaksi terbaca
+              {angka(merged.transactions.length)} transaksi terbaca
+              {merged.duplicatesRemoved > 0
+                ? ` · ${angka(merged.duplicatesRemoved)} duplikat dibuang`
+                : ""}
             </p>
             <p className="mt-0.5 text-xs text-ink-2">
-              {periode(metrics.periodStart || parse.meta.periodStart, metrics.periodEnd || parse.meta.periodEnd)}
+              {periode(metrics.periodStart || merged.periodStart, metrics.periodEnd || merged.periodEnd)}
               {metrics.endingBalance !== undefined
                 ? ` · saldo akhir ${rupiah(metrics.endingBalance)}`
                 : ""}
@@ -66,9 +75,32 @@ export function Dashboard({
           </button>
         </div>
 
-        {parse.warnings.length > 0 ? (
+        {/* Rincian per file — penting supaya jelas periode mana dari file mana. */}
+        <ul className="mt-3 grid gap-1.5 border-t border-hairline pt-3 sm:grid-cols-2">
+          {merged.files.map((f) => (
+            <li key={f.fileName} className="flex items-baseline gap-2 text-[11px]">
+              <span
+                aria-hidden
+                className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ background: "var(--series-1)" }}
+              />
+              <span className="min-w-0">
+                <span className="block truncate font-medium text-ink-2" title={f.fileName}>
+                  {f.fileName}
+                </span>
+                <span className="text-ink-muted">
+                  {f.fileType.toUpperCase()}
+                  {f.pages ? ` · ${f.pages} hal.` : ""} · {angka(f.rows)} transaksi
+                  {f.periodStart ? ` · ${periode(f.periodStart, f.periodEnd)}` : ""}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        {merged.warnings.length > 0 ? (
           <ul className="mt-3 space-y-1 border-t border-hairline pt-3">
-            {parse.warnings.map((w, i) => (
+            {merged.warnings.map((w, i) => (
               <li key={i} className="flex gap-1.5 text-[11px] text-ink-muted">
                 <span
                   aria-hidden

@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  # Supaya bisa dijalankan manual dari tab Actions.
+  workflow_dispatch:
+
+# Push baru ke PR yang sama membatalkan run sebelumnya — hemat waktu runner.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Test memakai type stripping lewat tsx dan `node --test`.
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Test unit + integration. Integration test membuat sendiri fixture
+      # e-statement sintetisnya, jadi tidak butuh file rahasia apa pun.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        # ANTHROPIC_API_KEY sengaja tidak diset: build harus tetap berhasil
+        # tanpa API key, karena itu juga cara aplikasi dipakai tanpa AI.
+        run: npm run build
+
+  audit:
+    name: Audit dependensi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Dipisah jadi job sendiri karena bisa gagal akibat advisory baru yang
+      # terbit di hulu, bukan karena perubahan di PR ini. Cakupannya sengaja
+      # dipersempit: hanya dependensi produksi, hanya severity high ke atas.
+      - name: Audit dependensi produksi
+        run: npm audit --omit=dev --audit-level=high
